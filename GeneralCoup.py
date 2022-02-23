@@ -25,9 +25,9 @@ class MoveType(enum.Enum):
     exchange = 6
 
 class CounterMoveType(enum.Enum):
-    foreign_aid = 0
-    assassinate = 1
-    steal = 2
+    foreign_aid = 7
+    assassinate = 8
+    steal = 9
 
 counter_index = {MoveType.foreign_aid:CounterMoveType.foreign_aid, 
                  MoveType.assassinate:CounterMoveType.assassinate,
@@ -36,7 +36,7 @@ counter_index = {MoveType.foreign_aid:CounterMoveType.foreign_aid,
 unchallengeable_moves = [MoveType.income, MoveType.foreign_aid, MoveType.coup]
 
 restricted_moves = {
-    InfluenceType.duke:MoveType.income,
+    InfluenceType.duke:MoveType.tax,
     InfluenceType.assassin:MoveType.assassinate,
     InfluenceType.captain:MoveType.steal,
     InfluenceType.ambassador:MoveType.exchange
@@ -50,9 +50,88 @@ restricted_countermoves = {
 
 class MultiPlayerCoup():
 
-    def valid_moves(self, public_state):
-        if
+    def __init__(self, num_players):
+        """initialize private states and restricted deck"""
+        if num_players > 6 or num_players < 2:
+            raise ValueError("Invalid number of players")
+        self.players = num_players
+        self.deck = [InfluenceType.duke, InfluenceType.duke, InfluenceType.duke,
+                    InfluenceType.assassin, InfluenceType.assassin, InfluenceType.assassin,
+                    InfluenceType.captain, InfluenceType.captain, InfluenceType.captain, 
+                    InfluenceType.ambassador, InfluenceType.ambassador, InfluenceType.ambassador, 
+                    InfluenceType.contessa, InfluenceType.contessa, InfluenceType.contessa]
+
+        random.shuffle(self.deck)
+        private_cards = []
+        for i in range(num_players):
+            private_cards.append([self.deck.pop(), self.deck.pop()])
+
+        #TODO: generate list of private states and return
+
+        pass
+
+    def init_state(self, num_players):
+        cards = []
+        for i in range(num_players):
+            #unflipped cards-- no observations
+            cards.append([-1,-1])
+        coins = [2 for i in range(num_players)]
+        turn_counter = 0
+        state_class = StateQuality.ACTION
+        curr_player = 0
+        action_player = 0
+        movestack = []
+        return PublicState(num_players, cards, coins, turn_counter, state_class, curr_player, action_player, movestack)
+
+    def valid_moves(self, player, public_state):
+        if public_state.state_class == StateQuality.ACTION and player == public_state.curr_player:
+            curr_coins = public_state.coins[public_state.curr_player]
+            moves = [MoveType.income, MoveType.foreign_aid]
+            if curr_coins > 3:
+                moves.append(MoveType.assassinate)
+            if curr_coins > 7:
+                moves.append(MoveType.coup)
+            moves.append([MoveType.tax, MoveType.steal, MoveType.assassinate])
+
+            #reset moves to only have coup if over coin limit
+            if curr_coins >= 10:
+                moves = [MoveType.coup]
+        
+        elif public_state.state_class = StateQuality.COUNTER:
+            last_action = public_state.movestack[-1]
+            #TODO: need to implement challenge representation in stack
+            
+        #TODO: implement challenge state action indexes 
+
+        pass
+
+    def is_terminal(self, public_state):
+        """return -1 if not terminal, otherwise index of player"""
+        alive_count = self.players
+        alive_ind = -1
+        for i in range(self.players):
+            #if both cards are flipped (-1 means not public/in play)
+            if public_state.cards[i][0] != -1 and public_state.cards[i][1] != -1:
+                alive_count -= 1
+            else:
+                alive_ind = i
+        if alive_count == 1:
+            return alive_ind 
+        else: 
+            return -1
+            
+
+    def play_game(self):
+        #TODO: implement loop control until is_terminal()
+        pass
+            
     
+
+    #TODO: change initialization of each move
+        #must include targeted players in init()
+        #in execute, must implement direct player intervention point
+            #exchange move particularly
+            #abstract away move obj from game tree decision making "moves"
 
     class BaseMove:
         def __init__(self, game):
@@ -61,6 +140,7 @@ class MultiPlayerCoup():
         #returns the new state of the game after execuing the action
         #updates self.history and reevaluates bins on each move
         def execute(self, curr_state):
+            """"""
             pass
 
     class TaxMove:
@@ -329,8 +409,7 @@ class PublicState:
             state_class = a StateQuality value
             curr_player = int to denote the player who initiated this state
             action_player = int to denote the player who chose the starting action (whose turn it is)
-            movestack = list of history"""
-        #self.bins = bins
+            movestack = list of history entries: [player, move] for all actions, counter-actions, challenges"""
         self.players = players
         self.cards = cards
         self.coins = coins 
