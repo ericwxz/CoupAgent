@@ -1,6 +1,8 @@
 import random 
 import enum
 
+INFLUENCE_TO_SELECTION_OFFSET = 11
+
 class StateQuality(enum.Enum):
     ACTION = 0
     CHALLENGEACTION = 1
@@ -25,9 +27,20 @@ class MoveType(enum.Enum):
     exchange = 6
 
 class CounterMoveType(enum.Enum):
+    inaction = -1
     foreign_aid = 7
     assassinate = 8
     steal = 9
+
+class ChallengeMoveType(enum.Enum):
+    inaction = -1 
+    challenge = 10 
+
+move_objs = {MoveType.income:IncomeMove, MoveType.foreign_aid:ForeignAidMove, MoveType.coup:CoupMove,
+            MoveType.tax:TaxMove, MoveType.assassinate:AssassinateMove, MoveType.steal:StealMove, 
+            MoveType.exchange:ExchangeMove, CounterMoveType.inaction:BaseMove, CounterMoveType.foreign_aid:CounterForeignAidMove,
+            CounterMoveType.assassinate:CounterAssassinMove, CounterMoveType.steal:CounterStealMove, 
+            ChallengeMoveType.inaction:BaseMove, ChallengeMoveType.challenge:ChallengeMove}
 
 counter_index = {MoveType.foreign_aid:CounterMoveType.foreign_aid, 
                  MoveType.assassinate:CounterMoveType.assassinate,
@@ -49,7 +62,15 @@ restricted_countermoves = {
 }
 
 class MultiPlayerCoup():
+    #game object runs game loop and:
+        #updates game state for every action made
+        #fetches valid moves for every player
+        #checks whether moves can be made and whether game phases need to be skipped
+        #passes moves to player agents; waits on them for their choices
+        #gives additional choices to agents if needed (ambassador exchange as a two-part decision)
+    #game object also stores the deck that is neither private nor completely public
 
+    #initialized by main program to 
     def __init__(self, num_players):
         """initialize private states and restricted deck"""
         if num_players > 6 or num_players < 2:
@@ -60,15 +81,15 @@ class MultiPlayerCoup():
                     InfluenceType.captain, InfluenceType.captain, InfluenceType.captain, 
                     InfluenceType.ambassador, InfluenceType.ambassador, InfluenceType.ambassador, 
                     InfluenceType.contessa, InfluenceType.contessa, InfluenceType.contessa]
+        self.curr_state = self.init_state(num_players)
 
         random.shuffle(self.deck)
-        private_cards = []
+        private_states = []
         for i in range(num_players):
-            private_cards.append([self.deck.pop(), self.deck.pop()])
-
-        #TODO: generate list of private states and return
-
-        pass
+            private_states.append(PrivateState([self.deck.pop(), self.deck.pop()]))
+        
+        return private_states
+        
 
     def init_state(self, num_players):
         cards = []
@@ -83,7 +104,23 @@ class MultiPlayerCoup():
         movestack = []
         return PublicState(num_players, cards, coins, turn_counter, state_class, curr_player, action_player, movestack)
 
+    def add_targets(self, valid_actions, player, last_move_player):
+        moves_with_targets = []
+        for move in valid_actions:
+            if move == MoveType.coup or move == moveType.assassinate or move == moveType.steal:
+                for i in range(self.players):
+                    if i != player:
+                        moves_with_targets.append([move, i])
+            elif isinstance(move, CounterMoveType):
+                moves_with_targets.append([move, last_move_player])
+            elif isinstance(move, ChallengeMoveType):
+                moves_with_targets.append([move, last_move_player])
+            else:
+                moves_with_targets.append([move, player])
+        return moves_with_targets
+
     def valid_moves(self, player, public_state):
+        #called by game manager for each player to pass to each agent
         if public_state.state_class == StateQuality.ACTION and player == public_state.curr_player:
             curr_coins = public_state.coins[public_state.curr_player]
             moves = [MoveType.income, MoveType.foreign_aid]
@@ -96,14 +133,16 @@ class MultiPlayerCoup():
             #reset moves to only have coup if over coin limit
             if curr_coins >= 10:
                 moves = [MoveType.coup]
-        
-        elif public_state.state_class = StateQuality.COUNTER:
-            last_action = public_state.movestack[-1]
-            #TODO: need to implement challenge representation in stack
-            
-        #TODO: implement challenge state action indexes 
 
-        pass
+            return moves 
+        
+        elif public_state.state_class == StateQuality.COUNTER:
+            last_action = public_state.movestack[-1]
+            #TODO: implement counter valid moves
+            
+        elif public_state.state_class == StateQuality.CHALLENGEACTION or public_state.state_class == StateQuality.CHALLENGECOUNTER:
+            return [ChallengeMoveType.inaction, ChallengeMoveType.challenge]
+
 
     def is_terminal(self, public_state):
         """return -1 if not terminal, otherwise index of player"""
@@ -120,10 +159,74 @@ class MultiPlayerCoup():
         else: 
             return -1
             
+    def show_deck_top(self):
+        random.shuffle(self.deck)
+        return [self.deck[0], self.deck[1]]
 
-    def play_game(self):
+    def play_game(self, agents):
         #TODO: implement loop control until is_terminal()
-        pass
+        winner = -1
+        while winner = self.is_terminal(self.curr_state) == -1:
+            curr = self.curr_state
+
+            #action phase
+            valid_moves = self.add_targets(self.valid_moves(curr.curr_player, curr), curr.action_player)
+            chosen_move = agents[curr.curr_player].make_move(valid_moves, curr)
+            curr.movestack.append([curr.curr_player, move_objs[chosen_move[0]](curr.curr_player, chosen_move[1])])
+            
+            #challenge phase, for action
+            curr.state_class = StateQuality.CHALLENGEACTION
+            challenge_initiated = False
+            for i in range(self.players):
+                if i != curr.curr_player:
+                    valid_moves = self.add_targets(self.valid_moves(currr.curr_player, curr), curr.action_player)
+                    chosen_move = agents[curr.curr_player].make_move(valid_moves, curr)
+                    if chosen_move[0] == ChallengeMoveType.challenge:
+                        curr.movestack.append([curr.curr_player, move_objs[chosen_move[0]](i, chosen_move[1])])
+                        challenge_initiated = True 
+                        break 
+            if challenge_initiated:
+                #TODO: implement challenge action and skip rest
+                    
+            
+            #COUNTER PHASE
+            curr.state_class = StateQuality.COUNTER
+            counter_initiated = False
+            for i in range(self.players):
+                if i != curr.curr_player:
+                    valid_moves = self.add_targets(self.valid_moves(currr.curr_player, curr), curr.movestack[-1][1].player)
+                    if len(valid_moves) > 0:
+                        chosen_move = agents[curr.curr_player].make_move(valid_moves, curr)
+                        if chosen_move[0] != CounterMoveType.inaction:
+                            counter_initiated = True 
+                            curr.movestack.append([curr.curr_player, move_objs[chosen_move[0]](i, chosen_move[1])])
+            if counter_initiated:
+                #TODO: skip rest
+
+
+
+            #challenge phase, for counteraction
+            curr.state_class = StateQuality.CHALLENGECOUNTER
+            for i in range(self.players):
+                if i != curr.curr_player:
+                    valid_moves = self.add_targets(self.valid_moves(currr.curr_player, curr), curr.movestack[-1][1].player)
+                    chosen_move = agents[curr.curr_player].make_move(valid_moves, curr)
+                    if chosen_move[0] == ChallengeMoveType.challenge:
+                        curr.movestack.append([curr.curr_player, move_objs[chosen_move[0]](i, chosen_move[1])])
+                        challenge_initiated = True 
+                        break
+            if challenge_initiated: 
+                #TODO: implement challenge action and skip rest
+
+            #TODO:edit states based on valid action, if action still valid
+
+
+            #reset to action phase
+            curr.state_class = StateQuality.ACTION
+            
+
+        return winner 
+        
             
     
 
@@ -134,8 +237,9 @@ class MultiPlayerCoup():
             #abstract away move obj from game tree decision making "moves"
 
     class BaseMove:
-        def __init__(self, game):
-            pass 
+        def __init__(self, player, target):
+            self.player = player 
+            self.target = target
         
         #returns the new state of the game after execuing the action
         #updates self.history and reevaluates bins on each move
