@@ -3,6 +3,8 @@ import enum
 
 INFLUENCE_TO_SELECTION_OFFSET = 11
 
+
+#influence type / move type indexes can be changed up here if there are any specific encoding concerns that arise later
 class StateQuality(enum.Enum):
     ACTION = 0
     CHALLENGEACTION = 1
@@ -52,16 +54,16 @@ counter_index = {MoveType.foreign_aid:CounterMoveType.foreign_aid,
 unchallengeable_moves = [MoveType.income, MoveType.foreign_aid, MoveType.coup]
 
 restricted_moves = {
-    InfluenceType.duke:MoveType.tax,
-    InfluenceType.assassin:MoveType.assassinate,
-    InfluenceType.captain:MoveType.steal,
-    InfluenceType.ambassador:MoveType.exchange
+    MoveType.tax:InfluenceType.duke,
+    MoveType.assassinate:InfluenceType.assassin,
+    MoveType.steal:InfluenceType.captain,
+    MoveType.exchange:InfluenceType.ambassador
 }
 restricted_countermoves = {
-    InfluenceType.duke:CounterMoveType.foreign_aid,
-    InfluenceType.contessa:CounterMoveType.assassinate,
-    InfluenceType.captain:CounterMoveType.steal,
-    InfluenceType.ambassador:CounterMoveType.steal
+    CounterMoveType.foreign_aid:InfluenceType.duke,
+    CounterMoveType.assassinate:InfluenceType.contessa,
+    CounterMoveType.steal:InfluenceType.captain,
+    CounterMoveType.steal:InfluenceType.ambassador
 }
 
 
@@ -137,7 +139,7 @@ class MultiPlayerCoup():
         #gives additional choices to agents if needed (ambassador exchange as a two-part decision)
     #game object also stores the deck that is neither private nor completely public
 
-    #initialized by main program to 
+    #initialized by main program to generate all relevant states
     def __init__(self, agent_list):
         """initialize private states and restricted deck"""
         num_players = len(agent_list)
@@ -155,17 +157,19 @@ class MultiPlayerCoup():
         random.shuffle(self.deck)
         private_states = []
         for i in range(num_players):
-            private_states.append(PrivateState([self.deck.pop(), self.deck.pop()]))
+            new_hand = PrivateState([self.deck.pop(), self.deck.pop()])
+            agent_list[i].set_private_state(new_hand)
+            private_states.append(new_hand)
         
         return private_states
         
 
     def init_state(self, num_players):
         cards = []
-        for i in range(num_players):
+        for _ in range(num_players):
             #unflipped cards-- no observations
             cards.append([-1,-1])
-        coins = [2 for i in range(num_players)]
+        coins = [2 for _ in range(num_players)]
         turn_counter = 0
         state_class = StateQuality.ACTION
         curr_player = 0
@@ -187,6 +191,9 @@ class MultiPlayerCoup():
             else:
                 moves_with_targets.append([move, player])
         return moves_with_targets
+
+    #provides valid moves for the start of a turn
+        #if further choices need to be made in evaluating an action (exchange choice), those choices are given in eval_turn
 
     def valid_moves(self, player, public_state):
         #called by game manager for each player to pass to each agent
@@ -249,58 +256,135 @@ class MultiPlayerCoup():
         return [self.deck[0], self.deck[1]]
 
 
-    #updates public and private game states by evaluating the results of the entire turn: actions, counteractions, challenges
-    #returns [state, finished] where continue is a bool indicating whether the turn is over
+    def update_states_lose_card(self, state, loser, chosen_discard):
+        self.agent_list[loser].lose_card(chosen_discard)
+        #update public state with the flipped card
+        if state.cards[i][0] != -1:
+            state.cards[i][1] = chosen_discard 
+        else:
+            state.cards[i][0] = chosen_discard
+
+
+    #called in game loop when a challenge is initiated to determine the next game phase
+        #1) checks private states and presents the loser with a choice to lose a card
+        #2) receives choice from agent and edits private and public states
+        #returns [state, True or False] signifying whether the challenge was successful or not
+    def eval_challenge(self, state, initiator, target):
+        #index to the challenged action in question will always be the penultimate on the movestack
+        initiator_cards = self.agent_list[initiator].private_state.cards
+        target_cards = self.agent_list[target].private_state.cards
+
+        challenged_move_type = self.movestack[-1][0]
+        challenged_influence_type = restricted_moves[challenged_move_type] if self.state = CHALLENGEACTION else restricted_countermoves[challenged_move_type]
+        
+        challenge_succcess = False
+        
+        if challenged_influence_type not in target_cards: 
+            #challenge succeeded-- target chooses a card to lose 
+            chosen_discard = self.agent_list[target].make_move(target_cards, state)
+            #change public and private states with new information
+            self.update_states_lose_card(state, target, chosen_discard)
+            challenge_success = True
+        else:
+            #challenge failed-- initiator chooses a card to lose
+            chosen_discard = self.agent_list[initiator].make_move(target_cards, state)
+            #change public and private states with new information
+            self.update_states_lose_card(state, initiator, chosen_discard)
+
+        return [state, challenge_success]
+
+    #action = [action_index, action_object]
+    def eval_starting_action(self, state, starting_action):
+        #no other actions were attempted aside from the starting action, direct eval
+        target = starting_action[1].target 
+
+        #moves involving just change in coins (completely public state change)
+        if starting_action[0] == MoveType.income:
+            state.coins[state.curr_player] += 1
+        elif starting_action[0] == MoveType.foreign_aid:
+            state.coins += 2
+        elif starting_action[0] == MoveType.tax:
+            state.coins += 3
+        elif starting_action[0] == MoveType.steal:
+            target_coins = state.coins[target]
+            state.coins[target] = 0 if target_coins <= 2 else target_coins - 2
+
+        #moves involving further choice and private state adjustment
+        elif starting_action[0] == MoveType.assasinate:
+            state.coins[state.curr_player] -= 3
+            target_cards = self.agent_list[target].private_state.cards
+            #target chooses a card to lose 
+            chosen_discard = self.agent_list[target].make_move(target_cards, state)
+            #change public and private states with new information
+            self.update_states_lose_card(state, target, chosen_discard)
+
+        elif starting_action[0] == MoveType.coup:
+            state.coins[state.curr_player] -= 7
+            target_cards = self.agent_list[target].private_state.cards
+            #target chooses a card to lose 
+            chosen_discard = self.agent_list[target].make_move(target_cards, state)
+            #change public and private states with new information
+            self.update_states_lose_card(state, target, chosen_discard)
+
+        #possible TODO: edit encoding of possible exchange moves
+        elif starting_action[0] == MoveType.exchange:
+            deck_top = self.show_deck_top 
+            possible_exchanges = [[-1]]
+            self.agent_list[state.curr_player].
+            #generate possible exchanges in the form [held card to switch, new card from deck]
+            for i in deck_top:
+                for j in self.agent_list[state.curr_player].private_state.cards:
+                    possible_exchanges.append([j, i])
+            chosen_exchange = self.agent_list[state.curr_player].make_move(possible_exchanges, state)
+            if chosen_exchange != [-1]:
+                #edit private state and deck
+                deck_index = 0 if deck_top[0] == chosen_exchange[1] else 1
+                hand_index = 0 if self.agent_list[state.curr_player].private_state.cards[0] == chosen_exchange[0] else 1
+                discarded_card = self.agent_list[state.curr_player].private_state.cards[hand_index]
+                self.agent_list[state.curr_player].private_state.cards[hand_index] = chosen_exchange[1]
+                self.deck[deck_index] = discarded_card 
+
+    def eval_counter(self, state, counteraction_type):
+        if counteraction_type == CounterMoveType.assassinate:
+            state.coins[state.curr_player] -= 3
+        
+    
+    #note: eval_turn is called at the end of the turn (absence of a counter, or with all challenges evaluated)
+        #eval_turn directly changes the game state (both public and private) and passes back the result to the play_game loop
+    #note: in evaluating the turn, all changes to states based on challenges will have been integrated into state
+
+    #updates public and private states with the results of actions (and counteractions)
     def eval_turn(self, state, index):
         #index is an integer showing how much from the end of the list we need to go back to find the starting action
         starting_action = state.movestack[-1*index - 1]
-        finished = False 
-        while not finished:
-            if index == 0:
-                #no other actions were attempted aside from the starting action, direct eval
-                #TODO: 
 
-                #moves involving just change in coins (completely public state change)
-                if starting_action[0] == MoveType.income:
+        if index == 0:
+            #no challenges or counters initiated, just evaluate action
+            self.eval_starting_action(state, starting_action)
+        elif index == 1:
+            #check if last move is a challenge-- if so, no counteraction was taken and the challenge failed, so evaluate action
+            last_action = state.movestack[-1][0]
+            if last_action == ChallengeMoveType.challenge: 
+                self.eval_starting_action(state, starting_action)
+            #counter moves prevent change in state except in the case of assassination, where spent coins are not returned
+            else: 
+                self.eval_counter(state, last_action)
+            
+        elif index == 2: 
+            #either challenge + uncontested counter or counter + challengecounter
+            #either way, since successful challenges won't lead to this function being run, counter succeeds
+            #if last move on the stack is a challengecounter:
+            last_action = state.movestack[-1][0]
+            if last_action == ChallengeMoveType.challenge:
+                self.eval_counter(state, state.movestack[-2][0])
 
-                elif starting_action[0] == MoveType.foreign_aid:
-
-                elif starting_action[0] == MoveType.tax:
-                
-                elif starting_action[0] == MoveType.steal:
-
-                #moves involving further choice and private state adjustment
-                elif starting_action[0] == MoveType.assasinate:
-
-                elif starting_action[0] == MoveType.coup:
-
-                elif starting_action[0] == MoveType.exchange:
-
-                finished = True
-
-            elif index == 1:
-                #either a challenge or a counteraction was attempted 
-                if starting_action[0] == ChallengeMoveType.challenge:
-                    #if challenge succeeded, introduce choice to lose card and mark finished
-
-                    #if challenged failed, action goes through; introduce choice to lose card go back to action
-
-                #counter moves prevent change in state except in the case of assassination, where spent coins are not returned
-                elif starting_action[0] == CounterMoveType.assassinate:
-
-                    finished = True
-            elif index == 2: 
-                #either challenge + uncontested counter or counter + challengecounter
-
-                #if last move on the stack is a challenge:
-                    #evaluate challenge on the counteraction; if successful, introduce choice to lose card and go back to action
-
-                    #if failed, counteraction succeeds and action fails; introduce choice to lose card and mark finished
-
-                #elif last move on the stack is a counter:
+            #elif last move on the stack is a counter:
+            else: 
+                self.eval_counter(state, last_action)
 
 
 
+    #TODO: check logic to see if dead players break game cycle
     def play_game(self, agents, print=False):
         winner = -1
         while winner = self.is_terminal(self.curr_state) == -1:
@@ -322,7 +406,7 @@ class MultiPlayerCoup():
             challenge_initiated = -1
             for i in range(self.players):
                 if i != curr.curr_player:
-                    valid_moves = self.add_targets(self.valid_moves(currr.curr_player, curr), curr.action_player)
+                    valid_moves = self.add_targets(self.valid_moves(curr.curr_player, curr), curr.action_player)
                     chosen_move = agents[curr.curr_player].make_move(valid_moves, curr)
                     if chosen_move[0] == ChallengeMoveType.challenge:
                         curr.movestack.append([curr.curr_player, move_objs[chosen_move[0]](i, chosen_move[1])])
@@ -331,7 +415,7 @@ class MultiPlayerCoup():
                         break 
             if challenge_initiated > -1:
                 #skip other phases and immediately evaluate result of challenge/edit state
-                result = self.eval_turn(curr, additional_actions)
+                result = self.eval_challenge(curr, challenge_initiated, curr.curr_player)
                 curr = result[0]
                 turn_over = result[1]
                 if turn_over:
@@ -364,9 +448,6 @@ class MultiPlayerCoup():
                     curr.state_class = StateQuality.CHALLENGECOUNTER
                 else:
                     #no counter initiated; skip challengecounter phase and move back to action
-                    result = self.eval_turn(curr, additional_actions)
-                    curr = result[0]
-                    turn_over = result[1]
                     curr.state_class = StateQuality.ACTION
 
 
@@ -383,7 +464,7 @@ class MultiPlayerCoup():
                             challenge_initiated = i 
                             break
                 if challenge_initiated > -1: 
-                    result = self.eval_turn(curr, additional_actions)
+                    result = self.eval_challenge(curr, challenge_initiated, curr.curr_player)
                     curr = result[0]
                     turn_over = result[1]
 
@@ -391,7 +472,9 @@ class MultiPlayerCoup():
                 result = self.eval_turn(curr, additional_actions)
             #advance to next turn
             curr.state_class = StateQuality.ACTION
-            curr.curr_player = (curr.curr_player + 1) % curr.players
+            while curr.cards[curr.curr_player][0] != -1 and curr.cards[curr.curr_player][1] != -1:
+                #loop over dead players where both cards are flipped; continue until we get to a player with at least one unturned influence
+                curr.curr_player = (curr.curr_player + 1) % curr.players
             
 
         return winner 
@@ -399,263 +482,44 @@ class MultiPlayerCoup():
             
     
 
-    #TODO: change initialization of each move
-        #must include targeted players in init()
-        #in execute, must implement direct player intervention point
-            #exchange move particularly
-            #abstract away move obj from game tree decision making "moves"
+    #TODO: change to be general move info object and streamline information encoding above
 
+    #move-specific definitions are artifacts of an older "simplified 2-player coup" implementation
     class BaseMove:
         def __init__(self, player, target):
             self.player = player 
             self.target = target
         
-        #returns the new state of the game after execuing the action
-        #updates self.history and reevaluates bins on each move
         def execute(self, curr_state):
             """"""
             pass
 
-    class TaxMove:
-        def __init__(self):
-            self.index =4
-        
-        #returns the new state of the game after execuing the action
-        #updates self.history and reevaluates bins on each move
-        def execute(self, curr_state, bin_encoder, history):
-            player = curr_state.curr_player
-            history.append((self,player))
-            if player == 0:
-                return PublicState(bin_encoder(),curr_state.p1cards,curr_state.p1coins+3,curr_state.p2cards,curr_state.p2coins,curr_state.turn_counter, curr_state.next_quality(),(player+1)%2,[(self.index, player)])
-            else:
-                return PublicState(bin_encoder(),curr_state.p1cards,curr_state.p1coins,curr_state.p2cards,curr_state.p2coins+3,curr_state.turn_counter, curr_state.next_quality(),(player+1)%2,[(self.index,player)])
-
-    class AssassinateMove:
-        def __init__(self):
-            self.index = 5 
-        
-        #returns the new state of the game after execuing the action
-        #updates self.history and reevaluates bins on each move
-        def execute(self, curr_state, bin_encoder, history):
-            player = curr_state.curr_player
-            history.append((self,player))
-            #delay card loss after other stages; only calculate coin loss
-            if player== 0:
-                return PublicState(bin_encoder(),curr_state.p1cards,curr_state.p1coins-3,curr_state.p2cards,curr_state.p2coins,curr_state.turn_counter, curr_state.next_quality(), (player+1)%2,[(self.index,player)])
-            else:
-                return PublicState(bin_encoder(),curr_state.p1cards,curr_state.p1coins,curr_state.p2cards,curr_state.p2coins-3,curr_state.turn_counter, curr_state.next_quality(), (player+1)%2,[(self.index, player)])   
-
-    class StealMove:
-        def __init__(self):
-            self.index = 6 
-        
-        #returns the new state of the game after execuing the action
-        #updates self.history and reevaluates bins on each move
-        def execute(self, curr_state, bin_encoder, history):
-            player = curr_state.curr_player
-            history.append((self,player))
-            stolen_amount = 2
-            if player == 0:
-                if curr_state.p2coins < 2:
-                    stolen_amount = curr_state.p2coins
-                return PublicState(bin_encoder(),curr_state.p1cards,curr_state.p1coins+stolen_amount,curr_state.p2cards,curr_state.p2coins-stolen_amount,curr_state.turn_counter, curr_state.next_quality(),(player+1)%2,[(self.index, player)])
-            else:
-                if curr_state.p1coins < 2:
-                    stolen_amount = curr_state.p1coins
-                return PublicState(bin_encoder(),curr_state.p1cards,curr_state.p1coins-stolen_amount,curr_state.p2cards,curr_state.p2coins+stolen_amount,curr_state.turn_counter, curr_state.next_quality(),(player+1)%2,[(self.index, player)]) 
-
-    class IncomeMove:
-        def __init__(self):
-            self.index = 1
-        
-        #returns the new state of the game after execuing the action
-        #updates self.history and reevaluates bins on each move
-        def execute(self, curr_state, bin_encoder, history):
-            player = curr_state.curr_player
-            history.append((self,player))
-            if player == 0:
-                return PublicState(bin_encoder(),curr_state.p1cards,curr_state.p1coins+1,curr_state.p2cards,curr_state.p2coins,curr_state.turn_counter, StateQuality.ACTION,(player+1)%2,[(self.index, player)])
-            else:
-                return PublicState(bin_encoder(),curr_state.p1cards,curr_state.p1coins,curr_state.p2cards,curr_state.p2coins+1,curr_state.turn_counter, StateQuality.ACTION,(player+1)%2,[(self.index, player)])
-
-    class ForeignAidMove:
-        def __init__(self):
-            self.index = 2
-        
-        #returns the new state of the game after execuing the action
-        #updates self.history and reevaluates bins on each move
-        def execute(self, curr_state, bin_encoder, history):
-            player = curr_state.curr_player
-            history.append((self,player))
-            if player == 0:
-                return PublicState(bin_encoder(),curr_state.p1cards,curr_state.p1coins+2,curr_state.p2cards,curr_state.p2coins,curr_state.turn_counter, StateQuality.COUNTER,(player+1)%2,[(self.index, player)])
-            else:
-                return PublicState(bin_encoder(),curr_state.p1cards,curr_state.p1coins,curr_state.p2cards,curr_state.p2coins+2,curr_state.turn_counter, StateQuality.COUNTER,(player+1)%2,[(self.index,player)]) 
-
-    class CoupMove:
-        def __init__(self):
-            self.index = 3
-        
-        def assign_players(self,p1obj,p2obj):
-            self.p1 = p1obj 
-            self.p2 = p2obj
-
-        #returns the new state of the game after execuing the action
-        #updates self.history and reevaluates bins on each move
-        def execute(self, curr_state, bin_encoder, history):
-            player = curr_state.curr_player
-            history.append((self,player))
-            if player == 0:
-                return PublicState(bin_encoder(),curr_state.p1cards,curr_state.p1coins-7,curr_state.p2cards,curr_state.p2coins,curr_state.turn_counter, StateQuality.LOSINGCARD,(player+1)%2,[(self.index,player)])
-            else:
-                return PublicState(bin_encoder(),curr_state.p1cards,curr_state.p1coins,curr_state.p2cards,curr_state.p2coins-7,curr_state.turn_counter, StateQuality.LOSINGCARD,(player+1)%2,[(self.index,player)]) 
-    
-    class CounterForeignAidMove:
-        def __init__(self):
-            self.index = 7
-        
-        #returns the new state of the game after execuing the action
-        #updates self.history and reevaluates bins on each move
-        def execute(self, curr_state, bin_encoder, history):
-            player = curr_state.curr_player
-            history.append((self,player))
-            curr_state.movestack.append((self.index,player))
-            if player == 0:
-                return PublicState(bin_encoder(),curr_state.p1cards,curr_state.p1coins,curr_state.p2cards,curr_state.p2coins-2,curr_state.turn_counter, curr_state.next_quality(),(player+1)%2,curr_state.movestack)
-            else: 
-                return PublicState(bin_encoder(),curr_state.p1cards,curr_state.p1coins-2,curr_state.p2cards,curr_state.p2coins,curr_state.turn_counter, curr_state.next_quality(),(player+1)%2,curr_state.movestack)  
-
-    class CounterStealMove:
-        def __init__(self):
-            self.index = 8
-        
-        #returns the new state of the game after execuing the action
-        #updates self.history and reevaluates bins on each move
-        def execute(self, curr_state, bin_encoder, history):
-            player = curr_state.curr_player
-            history.append((self,player))
-            curr_state.movestack.append((self.index,player))
-            if player == 0:
-                return PublicState(bin_encoder(),curr_state.p1cards,curr_state.p1coins+2,curr_state.p2cards,curr_state.p2coins-2,curr_state.turn_counter, curr_state.next_quality(),(player+1)%2,curr_state.movestack)
-            else: 
-                return PublicState(bin_encoder(),curr_state.p1cards,curr_state.p1coins-2,curr_state.p2cards,curr_state.p2coins+2,curr_state.turn_counter, curr_state.next_quality(),(player+1)%2,curr_state.movestack)  
-  
-
-    class CounterAssassinMove:
-        def __init__(self):
-            self.index = 9
-        
-        #returns the new state of the game after execuing the action
-        #updates self.history and reevaluates bins on each move
-        def execute(self, curr_state, bin_encoder, history):
-            player = curr_state.curr_player
-            history.append((self,player))
-            curr_state.movestack.append((self.index,player))
-            if player == 0:
-                return PublicState(bin_encoder(),curr_state.p1cards,curr_state.p1coins,curr_state.p2cards,curr_state.p2coins ,curr_state.turn_counter, curr_state.next_quality(),(player+1)%2,curr_state.movestack)
-            else: 
-                return PublicState(bin_encoder(),curr_state.p1cards,curr_state.p1coins,curr_state.p2cards,curr_state.p2coins,curr_state.turn_counter, curr_state.next_quality(),(player+1)%2,curr_state.movestack)  
-  
-
-    class ChallengeMove:
-        def __init__(self,associationtable):
-            self.index = 10
-            self.associations = associationtable
-        def assign_players(self,p1obj,p2obj):
-            self.p1 = p1obj 
-            self.p2 = p2obj
-        def execute(self,curr_state,bin_encoder,history):
-            last_action = curr_state.movestack.pop()[0] 
-            card_challenge = self.associations[last_action]
-            curr_state.movestack.append((self.index,curr_state.curr_player))
-            if curr_state.curr_player == 0:
-                if card_challenge not in self.p2.cards:
-                    #successful challenge
-                    return PublicState(curr_state.bins, curr_state.p1cards, curr_state.p1coins, curr_state.p2cards, curr_state.p2coins, curr_state.turn_counter,StateQuality.LOSINGCARD, (curr_state.curr_player+1)%2,curr_state.movestack)
-                else:
-                    return PublicState(curr_state.bins, curr_state.p1cards, curr_state.p1coins, curr_state.p2cards, curr_state.p2coins, curr_state.turn_counter,StateQuality.LOSINGCARD, curr_state.curr_player,curr_state.movestack)
-            else: 
-                if card_challenge not in self.p1.cards:
-                    #successful challenge
-                    return PublicState(curr_state.bins, curr_state.p1cards, curr_state.p1coins, curr_state.p2cards, curr_state.p2coins, curr_state.turn_counter,StateQuality.LOSINGCARD, (curr_state.curr_player+1)%2,curr_state.movestack)
-                else:
-                    return PublicState(curr_state.bins, curr_state.p1cards, curr_state.p1coins, curr_state.p2cards, curr_state.p2coins, curr_state.turn_counter,StateQuality.LOSINGCARD, curr_state.curr_player,curr_state.movestack)
-
-    class AllowMove:
-        def __init__(self):
-            self.index = 11 
-
-        def execute(self,curr_state,bin_encoder,history):
-            next_counter = curr_state.turn_counter
-            next_player = curr_state.curr_player
-            curr_state.movestack.append((self.index,curr_state.curr_player))
-            if curr_state.next_quality() == StateQuality.ACTION:
-                next_counter += 1
-                next_player = (next_player + 1)%2
-
-            #allowing at some point in the assasination route
-            if curr_state.movestack[0].index == 5:
-                last_move = curr_state.movestack[len(curr_state.movestack)-1]
-                if last_move[0] == 9:
-                    #last move was a contessa, and allowing contessa to block: no changes 
-                    return PublicState(curr_state.bins, curr_state.p1cards, curr_state.p1coins, curr_state.p2cards, curr_state.p2coins,next_counter,curr_state.next_quality(),next_player,curr_state.movestack)
-                elif last_move[0] == 11:
-                    #last move was an opportunity to block with contessa but chose to let assassin go through: advance to LOSINGCARD
-                    return PublicState(curr_state.bins, curr_state.p1cards, curr_state.p1coins, curr_state.p2cards, curr_state.p2coins,next_counter,StateQuality.LOSINGCARD,next_player,curr_state.movestack)
+    class TaxMove(BaseMove):
+        pass
             
-            return PublicState(curr_state.bins, curr_state.p1cards, curr_state.p1coins, curr_state.p2cards, curr_state.p2coins,next_counter,curr_state.next_quality(),next_player,curr_state.movestack)
-    class LoseCardZero:
-        def __init__(self, game):
-            self.index = 12
-            self.game = game 
+    class AssassinateMove(BaseMove):
+        pass
 
-        def execute(self, curr_state,bin_encoder,history):
-            if curr_state.curr_player == 0:
-                card_lost = self.game.p1cards.pop(0)
-                self.game.p1deadcards.append(card_lost)
-                self.game.history.append((-1, 0, card_lost))
-                p1cards = curr_state.p1cards-1
-                p2cards = curr_state.p2cards
-                
-            else:
-                card_lost = self.game.p2cards.pop(0)
-                self.game.p2deadcards.append(card_lost)
-                self.game.history.append((-1,1,card_lost))
-                p1cards = curr_state.p1cards
-                p2cards = curr_state.p2cards-1
-            
-            curr_action = curr_state.movestack.pop(0)
-            if curr_action[1] == 0:
-                next_player = 1
-            else:
-                next_player = 0
-                    
-            return PublicState(bin_encoder(), p1cards, curr_state.p1coins, p2cards,curr_state.p2coins,curr_state.turn_counter+1,StateQuality.ACTION, next_player, [])
+    class StealMove(BaseMove):
+        pass
 
-    class LoseCardOne:
-        def __init__(self, game):
-            self.index = 13
-            self.game = game 
+    class IncomeMove(BaseMove):
+        pass
 
-        def execute(self, curr_state,bin_encoder,history):
-            if curr_state.curr_player == 0:
-                card_lost = self.game.p1cards.pop(1)
-                self.game.p1deadcards.append(card_lost)
-                self.game.history.append((-1, 0, card_lost))
-                p1cards = curr_state.p1cards-1
-                p2cards = curr_state.p2cards
-            else:
-                card_lost = self.game.p2cards.pop(1)
-                self.game.p2deadcards.append(card_lost)
-                self.game.history.append((-1,1,card_lost))
-                p1cards = curr_state.p1cards
-                p2cards = curr_state.p2cards-1
+    class ForeignAidMove(BaseMove):
+        pass
+        
+    class CoupMove(BaseMove):
+        pass
+        
+    class CounterForeignAidMove(BaseMove):
+       pass
+       
+    class CounterStealMove(BaseMove):
+        pass
+        
+    class CounterAssassinMove(BaseMove):
+        pass
 
-            curr_action = curr_state.movestack.pop(0)
-            if curr_action[1] == 0:
-                next_player = 1
-            else:
-                next_player = 0
-                    
-            return PublicState(bin_encoder(), p1cards, curr_state.p1coins, p2cards,curr_state.p2coins,curr_state.turn_counter+1,StateQuality.ACTION, next_player, [])
-
+    class ChallengeMove(BaseMove):
+       pass
