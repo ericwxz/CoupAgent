@@ -22,6 +22,9 @@ class InfluenceType(enum.Enum):
     ambassador = 14
     contessa = 15
 
+influence_type_strings = {InfluenceType.duke:"Duke",InfluenceType.assassin:"Assassin", InfluenceType.captain:"Captain",
+                          InfluenceType.ambassador:"Ambassador", InfluenceType.contessa:"Contessa", -1:"N/A"}
+
 class MoveType(enum.Enum):
     income = 0
     foreign_aid = 1
@@ -31,25 +34,30 @@ class MoveType(enum.Enum):
     steal = 5
     exchange = 6
 
+move_type_strings = {MoveType.income:"Income",MoveType.foreign_aid:"Foreign Aid", MoveType.coup:"Coup", 
+                     MoveType.tax:"Tax",MoveType.assassinate:"Assassinate",MoveType.steal:"Steal",MoveType.exchange:"Exchange"}
+
 class CounterMoveType(enum.Enum):
     inaction = -1
     foreign_aid = 7
     assassinate = 8
-    steal = 9
+    steal_s = 9
+    steal_a = 10
 
 class ChallengeMoveType(enum.Enum):
     inaction = -1 
-    challenge = 10 
+    challenge = 11
 
 move_objs = {MoveType.income:IncomeMove, MoveType.foreign_aid:ForeignAidMove, MoveType.coup:CoupMove,
             MoveType.tax:TaxMove, MoveType.assassinate:AssassinateMove, MoveType.steal:StealMove, 
             MoveType.exchange:ExchangeMove, CounterMoveType.inaction:BaseMove, CounterMoveType.foreign_aid:CounterForeignAidMove,
-            CounterMoveType.assassinate:CounterAssassinMove, CounterMoveType.steal:CounterStealMove, 
-            ChallengeMoveType.inaction:BaseMove, ChallengeMoveType.challenge:ChallengeMove}
+            CounterMoveType.assassinate:CounterAssassinMove, CounterMoveType.steal_s:CounterStealCaptainMove, 
+            CounterMoveType.steal_a:CounterStealAmbassadorMove, ChallengeMoveType.inaction:BaseMove, 
+            ChallengeMoveType.challenge:ChallengeMove}
 
 counter_index = {MoveType.foreign_aid:CounterMoveType.foreign_aid, 
                  MoveType.assassinate:CounterMoveType.assassinate,
-                 MoveType.steal:CounterMoveType.steal}
+                 MoveType.steal:[CounterMoveType.steal_s, CounterMoveType.steal_a]}
 
 unchallengeable_moves = [MoveType.income, MoveType.foreign_aid, MoveType.coup]
 
@@ -62,8 +70,8 @@ restricted_moves = {
 restricted_countermoves = {
     CounterMoveType.foreign_aid:InfluenceType.duke,
     CounterMoveType.assassinate:InfluenceType.contessa,
-    CounterMoveType.steal:InfluenceType.captain,
-    CounterMoveType.steal:InfluenceType.ambassador
+    CounterMoveType.steal_s:InfluenceType.captain,
+    CounterMoveType.steal_a:InfluenceType.ambassador
 }
 
 
@@ -77,6 +85,12 @@ class PrivateState:
     
     def lost_influence(self):
         #TODO: maybe not? depends on state change mechanism
+    
+    def __repr__(self):
+        repr_str = "Private influence: " 
+        for card in self.cards:
+            repr_str += influence_type_strings[card]
+        return repr_str
 
 class PublicState:
     #contains info about history, each player's coin count, and dead influence
@@ -129,6 +143,24 @@ class PublicState:
         encoded.extend(list(self.encode_action(last_move[0]))) #13
         encoded.append(last_move[1]) #1
         return encoded"""
+
+    def __repr__(self):
+        line1 = "       "
+        line2 = "Coins: "
+        line3 = "Cards: "
+        line4 = "       "
+        for i in range(self.players):
+            line1 += "   " + "Player" + str(i) + "   " #ten characters per player
+            coins_str = self.coins[i]
+            line2 += "   " + coins_str
+            line2 += " " for j in range(7 - len(coins_str))
+            line3 += "   " + influence_type_strings[self.cards[i][0]]
+            line3 += " " for i in range(7 - len(influence_type_strings[self.cards[i][0]]))
+            line4 += "   " + influence_type_strings[self.cards[i][1]]
+            line4 += " " for i in range(7 - len(influence_type_strings[self.cards[i][1]]))
+        return line1 + "\n" + line2 + "\n" + line3 + "\n" + line4 + "\n"
+
+        
 
 class MultiPlayerCoup():
     #game object runs game loop and:
@@ -192,9 +224,9 @@ class MultiPlayerCoup():
                 moves_with_targets.append([move, player])
         return moves_with_targets
 
-    #provides valid moves for the start of a turn
-        #if further choices need to be made in evaluating an action (exchange choice), those choices are given in eval_turn
-
+    #provides valid types of actions for the start of a turn
+        #if further choices need to be made after evaluating the other phases (exchange choice), those choices are given in eval_turn
+        #otherwise, target selection is made by the agent
     def valid_moves(self, player, public_state):
         #called by game manager for each player to pass to each agent
         if public_state.state_class == StateQuality.ACTION and player == public_state.curr_player:
@@ -220,7 +252,8 @@ class MultiPlayerCoup():
                     return [CounterMoveType.foreign_aid]
                 #aside from foreign aid, other counters can only be initiated if a player is a target
                 elif last_action[1].target == player and last_action[0] in counter_index:
-                    return [counter_index[last_action[0]]]
+                    possible_counters = counter_index[last_action[0]]
+                    return possible_counters if isinstance(possible_counters, list) else [possible_counters]
                 else:
                     return []
             else:
@@ -381,14 +414,16 @@ class MultiPlayerCoup():
             #elif last move on the stack is a counter:
             else: 
                 self.eval_counter(state, last_action)
+        return self.is_terminal(state)
 
 
-
-    #TODO: check logic to see if dead players break game cycle
     def play_game(self, agents, print=False):
         winner = -1
         while winner = self.is_terminal(self.curr_state) == -1:
             curr = self.curr_state
+            while curr.cards[curr.curr_player][0] != -1 and curr.cards[curr.curr_player][1] != -1:
+                #loop over dead players where both cards are flipped; continue until we get to a player with at least one unturned influence
+                curr.curr_player = (curr.curr_player + 1) % curr.players
             additional_actions = 0
 
             challenge_initiated = -1
@@ -470,11 +505,13 @@ class MultiPlayerCoup():
 
             if not turn_over:
                 result = self.eval_turn(curr, additional_actions)
+            
+            for agent in self.agent_list:
+                #does nothing for most agents except for human players, for whom itll print their state
+                agent.public_state_update(curr, curr.movestack[-(additional_actions + 1):curr.movestack[len(curr.movestack)]])
+
             #advance to next turn
             curr.state_class = StateQuality.ACTION
-            while curr.cards[curr.curr_player][0] != -1 and curr.cards[curr.curr_player][1] != -1:
-                #loop over dead players where both cards are flipped; continue until we get to a player with at least one unturned influence
-                curr.curr_player = (curr.curr_player + 1) % curr.players
             
 
         return winner 
@@ -495,31 +532,49 @@ class MultiPlayerCoup():
             pass
 
     class TaxMove(BaseMove):
-        pass
+        def __repr__(self):
+            return "Player " + str(self.player) + " taxed (Duke)"
             
     class AssassinateMove(BaseMove):
-        pass
+        def __repr__(self):
+            return "Player " + str(self.player) + " assassinated Player " + str(self.target) + " (Assassin)" 
 
     class StealMove(BaseMove):
-        pass
+        def __repr__(self):
+            return "Player " + str(self.player) + " stole from Player " + str(self.target) + " (Captain)"
+
+    class ExchangeMove(BaseMove):
+        def __repr__(self): 
+            return "Player " + str(self.player) + " exchanged with the deck"
 
     class IncomeMove(BaseMove):
-        pass
+        def __repr__(self):
+            return "Player " + str(self.player) + " took income"
 
     class ForeignAidMove(BaseMove):
-        pass
+        def __repr__(self):
+            return "Player " + str(self.player) + " took foreign aid"
         
     class CoupMove(BaseMove):
-        pass
+        def __repr__(self):
+            return "Player " + str(self.player) + " couped Player " + str(self.target)
         
     class CounterForeignAidMove(BaseMove):
-       pass
+        def __repr__(self):
+            return "Player " + str(self.player) + "countered Player " + str(self.target) + "'s attempt at foreign aid"
        
-    class CounterStealMove(BaseMove):
-        pass
+    class CounterStealCaptainMove(BaseMove):
+        def __repr__(self):
+            return "Player " + str(self.player) + "countered Player " + str(self.target) + "'s attempt at stealing (Captain)"
+
+    class CounterStealAmbassadorMove(BaseMove):
+        def __repr__(self):
+            return "Player " + str(self.player) + "countered Player " + str(self.target) + "'s attempt at stealing (Ambassador)"
         
     class CounterAssassinMove(BaseMove):
-        pass
+        def __repr__(self):
+            return "Player " + str(self.player) + "countered Player " + str(self.target) + "'s attempt at assassination (Contessa)"
 
     class ChallengeMove(BaseMove):
-       pass
+       def __repr__(self):
+           return "Player " + str(self.player) + "challenged Player " + str(self.target) + "'s last action"
