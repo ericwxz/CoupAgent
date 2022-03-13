@@ -94,30 +94,32 @@ class CoupMove(BaseMove):
     
 class CounterForeignAidMove(BaseMove):
     def __repr__(self):
-        return "Player " + str(self.player) + "countered Player " + str(self.target) + "'s attempt at foreign aid"
+        return "Player " + str(self.player) + " countered Player " + str(self.target) + "'s attempt at foreign aid"
     
 class CounterStealCaptainMove(BaseMove):
     def __repr__(self):
-        return "Player " + str(self.player) + "countered Player " + str(self.target) + "'s attempt at stealing (Captain)"
+        return "Player " + str(self.player) + " countered Player " + str(self.target) + "'s attempt at stealing (Captain)"
 
 class CounterStealAmbassadorMove(BaseMove):
     def __repr__(self):
-        return "Player " + str(self.player) + "countered Player " + str(self.target) + "'s attempt at stealing (Ambassador)"
+        return "Player " + str(self.player) + " countered Player " + str(self.target) + "'s attempt at stealing (Ambassador)"
     
 class CounterAssassinMove(BaseMove):
     def __repr__(self):
-        return "Player " + str(self.player) + "countered Player " + str(self.target) + "'s attempt at assassination (Contessa)"
+        return "Player " + str(self.player) + " countered Player " + str(self.target) + "'s attempt at assassination (Contessa)"
 
 class ChallengeMove(BaseMove):
     def __init__(self, player, target, success=None):
         self.success = success
+        self.success_str = ""
         BaseMove.__init__(self, player, target)
     
     def update_success(self, success):
         self.success = success
+        self.success_str = "successfully" if success else "unsuccessfully"
 
     def __repr__(self):
-        return "Player " + str(self.player) + "challenged Player " + str(self.target) + "'s last action"
+        return "Player " + str(self.player) + " challenged Player " + str(self.target) + "'s last action " + self.success_str
 
 move_objs = {MoveType.income:IncomeMove, MoveType.foreign_aid:ForeignAidMove, MoveType.coup:CoupMove,
             MoveType.tax:TaxMove, MoveType.assassinate:AssassinateMove, MoveType.steal:StealMove, 
@@ -223,14 +225,14 @@ class PublicState:
         line3 = "Cards: "
         line4 = "       "
         for i in range(self.players):
-            line1 += "   " + "Player" + str(i) + " " #ten characters per player
+            line1 += "Player" + str(i) + "   " #ten characters per player
             coins_str = str(self.coins[i])
-            line2 += "   " + coins_str
-            line2 += " " * (7 - len(coins_str))
-            line3 += "   " + influence_type_strings[self.cards[i][0]]
-            line3 += " " * (7 - len(influence_type_strings[self.cards[i][0]]))
-            line4 += "   " + influence_type_strings[self.cards[i][1]]
-            line4 += " " * (7 - len(influence_type_strings[self.cards[i][1]]))
+            line2 += coins_str 
+            line2 += " " * (10 - len(coins_str))
+            line3 += influence_type_strings[self.cards[i][0]]
+            line3 += " " * (10 - len(influence_type_strings[self.cards[i][0]]))
+            line4 += influence_type_strings[self.cards[i][1]]
+            line4 += " " * (10 - len(influence_type_strings[self.cards[i][1]]))
         return line1 + "\n" + line2 + "\n" + line3 + "\n" + line4 + "\n"
 
         
@@ -288,6 +290,7 @@ class MultiPlayerCoup():
             if move == MoveType.coup or move == MoveType.assassinate or move == MoveType.steal:
                 for i in range(self.players):
                     if i != player:
+                        print("DEBUG: " + str(i) + " as target for current player " + str(player))
                         moves_with_targets.append([move, i])
             elif isinstance(move, CounterMoveType):
                 moves_with_targets.append([move, last_move_player])
@@ -306,11 +309,11 @@ class MultiPlayerCoup():
             curr_coins = public_state.coins[public_state.curr_player]
             print("Coins for player " + str(public_state.curr_player) + ": " + str(curr_coins))
             moves = [MoveType.income, MoveType.foreign_aid]
-            if curr_coins > 3:
+            if curr_coins >= 3:
                 moves.append(MoveType.assassinate)
-            if curr_coins > 7:
+            if curr_coins >= 7:
                 moves.append(MoveType.coup)
-            moves.extend([MoveType.tax, MoveType.steal])
+            moves.extend([MoveType.tax, MoveType.steal, MoveType.exchange])
 
             #reset moves to only have coup if over coin limit
             if curr_coins >= 10:
@@ -397,14 +400,31 @@ class MultiPlayerCoup():
             #change public and private states with new information
             self.update_states_lose_card(state, target, chosen_discard)
             challenge_success = True
+
         else:
             #challenge failed-- initiator chooses a card to lose
             chosen_discard = self.agent_list[initiator].make_move(initiator_cards, state)
             #change public and private states with new information
             self.update_states_lose_card(state, initiator, chosen_discard)
+
+            #TODO: target has to switch out the card in question for a random one from the deck
+            random.shuffle(self.deck)
+            new_card = self.deck.pop()
+            self.agent_list[target].private_state.cards.remove(challenged_influence_type)
+            self.agent_list[target].private_state.cards.append(new_card)
+            self.deck.append(challenged_influence_type)
         
         state.movestack[-1][1].update_success(challenge_success)
+        print('DEBUG: private states after challenge')
+        print('DEBUG: target state:' + str(self.agent_list[target].private_state))
+        print('DEBUG: initiator state:' + str(self.agent_list[initiator].private_state))
         return [state, challenge_success]
+
+    #returns True/False-- True if player #target is still alive, False otherwise
+    def check_target_aliveness(self, state, target):
+        if state.cards[target][0] == -1 or state.cards[target][1] == -1:
+            return True 
+        return False
 
     #action = [action_index, action_object]
     def eval_starting_action(self, state, starting_action):
@@ -419,42 +439,47 @@ class MultiPlayerCoup():
         elif starting_action[0] == MoveType.tax:
             state.coins[state.curr_player] += 3
         elif starting_action[0] == MoveType.steal:
-            target_coins = state.coins[target]
-            state.coins[target] = 0 if target_coins <= 2 else target_coins - 2
+            if self.check_target_aliveness(state, target):
+                target_coins = state.coins[target]
+                state.coins[target] = 0 if target_coins <= 2 else target_coins - 2
+                state.coins[state.curr_player] += target_coins if target_coins <= 2 else 2
 
         #moves involving further choice and private state adjustment
         elif starting_action[0] == MoveType.assassinate:
-            state.coins[state.curr_player] -= 3
-            target_cards = self.agent_list[target].private_state.cards
-            #target chooses a card to lose 
-            chosen_discard = self.agent_list[target].make_move(target_cards, state)
-            #change public and private states with new information
-            self.update_states_lose_card(state, target, chosen_discard)
+            if self.check_target_aliveness(state, target):
+                state.coins[state.curr_player] -= 3
+                target_cards = self.agent_list[target].private_state.cards
+                #target chooses a card to lose 
+                chosen_discard = self.agent_list[target].make_move(target_cards, state)
+                #change public and private states with new information
+                self.update_states_lose_card(state, target, chosen_discard)
 
         elif starting_action[0] == MoveType.coup:
-            state.coins[state.curr_player] -= 7
-            target_cards = self.agent_list[target].private_state.cards
-            #target chooses a card to lose 
-            chosen_discard = self.agent_list[target].make_move(target_cards, state)
-            #change public and private states with new information
-            self.update_states_lose_card(state, target, chosen_discard)
+            if self.check_target_aliveness(state, target):
+                state.coins[state.curr_player] -= 7
+                target_cards = self.agent_list[target].private_state.cards
+                #target chooses a card to lose 
+                chosen_discard = self.agent_list[target].make_move(target_cards, state)
+                #change public and private states with new information
+                self.update_states_lose_card(state, target, chosen_discard)
 
         #possible TODO: edit encoding of possible exchange moves
         elif starting_action[0] == MoveType.exchange:
-            deck_top = self.show_deck_top 
-            possible_exchanges = [[-1]]
-            #generate possible exchanges in the form [held card to switch, new card from deck]
-            for i in deck_top:
-                for j in self.agent_list[state.curr_player].private_state.cards:
-                    possible_exchanges.append([j, i])
-            chosen_exchange = self.agent_list[state.curr_player].make_move(possible_exchanges, state)
-            if chosen_exchange != [-1]:
-                #edit private state and deck
-                deck_index = 0 if deck_top[0] == chosen_exchange[1] else 1
-                hand_index = 0 if self.agent_list[state.curr_player].private_state.cards[0] == chosen_exchange[0] else 1
-                discarded_card = self.agent_list[state.curr_player].private_state.cards[hand_index]
-                self.agent_list[state.curr_player].private_state.cards[hand_index] = chosen_exchange[1]
-                self.deck[deck_index] = discarded_card 
+            if self.check_target_aliveness(state, target):
+                deck_top = self.show_deck_top() 
+                possible_exchanges = [[-1]]
+                #generate possible exchanges in the form [held card to switch, new card from deck]
+                for i in deck_top:
+                    for j in self.agent_list[state.curr_player].private_state.cards:
+                        possible_exchanges.append([j, i])
+                chosen_exchange = self.agent_list[state.curr_player].make_move(possible_exchanges, state)
+                if chosen_exchange != [-1]:
+                    #edit private state and deck
+                    deck_index = 0 if deck_top[0] == chosen_exchange[1] else 1
+                    hand_index = 0 if self.agent_list[state.curr_player].private_state.cards[0] == chosen_exchange[0] else 1
+                    discarded_card = self.agent_list[state.curr_player].private_state.cards[hand_index]
+                    self.agent_list[state.curr_player].private_state.cards[hand_index] = chosen_exchange[1]
+                    self.deck[deck_index] = discarded_card 
 
     def eval_counter(self, state, counteraction_type):
         if counteraction_type == CounterMoveType.assassinate:
@@ -525,7 +550,7 @@ class MultiPlayerCoup():
             #action phase
             if print_phases:
                 print("ACTION PHASE")
-            valid_moves = self.add_targets(self.valid_moves(curr.curr_player, curr), curr.action_player, curr.curr_player)
+            valid_moves = self.add_targets(self.valid_moves(curr.curr_player, curr), curr.curr_player, curr.curr_player)
             chosen_move = agents[curr.curr_player].make_move(valid_moves, curr)
             curr.movestack.append([chosen_move[0], move_objs[chosen_move[0]](curr.curr_player, chosen_move[1])])
             if print_phases:
@@ -590,7 +615,7 @@ class MultiPlayerCoup():
                                 curr.movestack.append([chosen_move[0], move_objs[chosen_move[0]](i, chosen_move[1])])
                                 break
                 if counter_initiated > -1:
-                    print("Counter initiated by Player " + str(counter_initiated))
+                    print("DEBUG: " + str(curr.movestack[-1][1]))
                     curr.state_class = StateQuality.CHALLENGECOUNTER
                 else:
                     #no counter initiated; skip challengecounter phase and move back to action

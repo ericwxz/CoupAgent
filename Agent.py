@@ -24,6 +24,9 @@ class Agent():
 
 class RandomAgent(Agent):
     def make_move(self, valid_moves, state):
+        print("DEBUG: Random agent choosing from possible moves: ")
+        for i in valid_moves:
+            print(i)
         return random.choice(valid_moves)
 
 class HumanAgent(Agent):
@@ -52,70 +55,83 @@ class HumanAgent(Agent):
             return valid_moves[selected_card_ind]
             
         else:
-            #standard action selection
-            print(state)
-            print("Valid Moves: ")
-            #note: all moves are given as [movetype, target]
-            move_dict = {}
-            #DEBUG
-            print(valid_moves)
-            for move in valid_moves:
+            #if in the exchange state, [-1 (do nothing)] is offered as first possible move
+            if valid_moves[0] == [-1]:
+                #TODO: add exchange mechanism
+                print("Valid exchanges: ")
+                print("0. " + "Keep existing cards")
+                for i in range(1,len(valid_moves)):
+                    print(str(i) + ". Exchange " + influence_type_strings[valid_moves[i][0]] + " for " + influence_type_strings[valid_moves[i][1]])
+                selected_move = int(input("Select option:"))
+                return valid_moves[selected_move]
+
+            else:
+                    
+                #standard action selection
+                print(state)
+                print("Valid Moves: ")
+                #note: all moves are given as [movetype, target]
+                move_dict = {}
                 #DEBUG
-                print(move)
-                if move[0] not in move_dict.keys():
-                    move_dict[move[0]] = []
-                move_dict[move[0]].append(move)
-            move_type_list = list(move_dict.keys())
+                print(valid_moves)
+                for move in valid_moves:
+                    #DEBUG
+                    print(move)
+                    if move[0] not in move_dict.keys():
+                        move_dict[move[0]] = []
+                    move_dict[move[0]].append(move)
+                move_type_list = list(move_dict.keys())
 
-            if state.state_class == StateQuality.ACTION:
+                if state.state_class == StateQuality.ACTION:
+                    
 
-                print("Select move type: ")
-                for i in range(len(move_type_list)):
-                    print(str(i) + ": " + move_type_strings[move_type_list[i]])
-                selection = int(input("Select move number:" ))
-                selected_move_type = move_type_list[selection]
+                    print("Select move type: ")
+                    for i in range(len(move_type_list)):
+                        print(str(i) + ": " + move_type_strings[move_type_list[i]])
+                    selection = int(input("Select move number:" ))
+                    selected_move_type = move_type_list[selection]
 
-                print("Possible targets: ")
-                targets = [move_dict[selected_move_type][i][1] for i in range(len(move_dict[selected_move_type]))]
-                target_str = ""
-                for i in range(len(targets)):
-                    target_str += "Player " + str(targets[i]) + ", "
-                target_str = target_str[:len(target_str)-2] 
-                print(target_str)
-                selected_target = int(input("Select player:"))
+                    print("Possible targets: ")
+                    targets = [move_dict[selected_move_type][i][1] for i in range(len(move_dict[selected_move_type]))]
+                    target_str = ""
+                    for i in range(len(targets)):
+                        target_str += "Player " + str(targets[i]) + ", "
+                    target_str = target_str[:len(target_str)-2] 
+                    print(target_str)
+                    selected_target = int(input("Select player:"))
 
-                if selected_target not in targets:
-                    selected_target = self.index
-                    print("Invalid player. Default to self")
-                
-                return [selected_move_type, selected_target]
+                    if selected_target not in targets:
+                        selected_target = self.index
+                        print("Invalid player. Default to self")
+                    
+                    return [selected_move_type, selected_target]
 
-            elif state.state_class == StateQuality.CHALLENGEACTION:
-                print("Select move type: ")
-                for i in range(len(move_type_list)):
-                    print(str(i) + ": " + move_type_strings[move_type_list[i]])
-                selection = int(input("Select move number:" ))
-                selected_move_type = move_type_list[selection]
+                elif state.state_class == StateQuality.CHALLENGEACTION:
+                    print("Select move type: ")
+                    for i in range(len(move_type_list)):
+                        print(str(i) + ": " + move_type_strings[move_type_list[i]])
+                    selection = int(input("Select move number:" ))
+                    selected_move_type = move_type_list[selection]
 
-                return move_dict[selected_move_type][0]
+                    return move_dict[selected_move_type][0]
 
-            elif state.state_class == StateQuality.COUNTER:
-                print("Select move type: ")
-                for i in range(len(move_type_list)):
-                    print(str(i) + ": " + move_type_strings[move_type_list[i]])
-                selection = int(input("Select move number:" ))
-                selected_move_type = move_type_list[selection]
+                elif state.state_class == StateQuality.COUNTER:
+                    print("Select move type: ")
+                    for i in range(len(move_type_list)):
+                        print(str(i) + ": " + move_type_strings[move_type_list[i]])
+                    selection = int(input("Select move number:" ))
+                    selected_move_type = move_type_list[selection]
 
-                return move_dict[selected_move_type][0]
+                    return move_dict[selected_move_type][0]
 
-            elif state.state_class == StateQuality.CHALLENGECOUNTER:
-                print("Select move type: ")
-                for i in range(len(move_type_list)):
-                    print(str(i) + ": " + move_type_strings[move_type_list[i]])
-                selection = int(input("Select move number:" ))
-                selected_move_type = move_type_list[selection]
+                elif state.state_class == StateQuality.CHALLENGECOUNTER:
+                    print("Select move type: ")
+                    for i in range(len(move_type_list)):
+                        print(str(i) + ": " + move_type_strings[move_type_list[i]])
+                    selection = int(input("Select move number:" ))
+                    selected_move_type = move_type_list[selection]
 
-                return move_dict[selected_move_type][0]
+                    return move_dict[selected_move_type][0]
 
     def public_state_update(self, state, turn_actions):
         print("Current state at the end of the turn: ")
