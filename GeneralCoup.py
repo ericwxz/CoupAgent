@@ -225,15 +225,15 @@ class PublicState:
         line3 = "Cards: "
         line4 = "       "
         for i in range(self.players):
-            line1 += "Player" + str(i) + "   " #ten characters per player
+            line1 += "Player" + str(i) + "    " #ten characters per player
             coins_str = str(self.coins[i])
             line2 += coins_str 
-            line2 += " " * (10 - len(coins_str))
+            line2 += " " * (11 - len(coins_str))
             line3 += influence_type_strings[self.cards[i][0]]
-            line3 += " " * (10 - len(influence_type_strings[self.cards[i][0]]))
+            line3 += " " * (11 - len(influence_type_strings[self.cards[i][0]]))
             line4 += influence_type_strings[self.cards[i][1]]
-            line4 += " " * (10 - len(influence_type_strings[self.cards[i][1]]))
-        return line1 + "\n" + line2 + "\n" + line3 + "\n" + line4 + "\n"
+            line4 += " " * (11 - len(influence_type_strings[self.cards[i][1]]))
+        return line1 + "\n" + line2 + "\n" + line3 + "\n" + line4 
 
         
 
@@ -290,7 +290,6 @@ class MultiPlayerCoup():
             if move == MoveType.coup or move == MoveType.assassinate or move == MoveType.steal:
                 for i in range(self.players):
                     if i != player:
-                        print("DEBUG: " + str(i) + " as target for current player " + str(player))
                         moves_with_targets.append([move, i])
             elif isinstance(move, CounterMoveType):
                 moves_with_targets.append([move, last_move_player])
@@ -307,7 +306,6 @@ class MultiPlayerCoup():
         #called by game manager for each player to pass to each agent
         if public_state.state_class == StateQuality.ACTION and player == public_state.curr_player:
             curr_coins = public_state.coins[public_state.curr_player]
-            print("Coins for player " + str(public_state.curr_player) + ": " + str(curr_coins))
             moves = [MoveType.income, MoveType.foreign_aid]
             if curr_coins >= 3:
                 moves.append(MoveType.assassinate)
@@ -322,14 +320,10 @@ class MultiPlayerCoup():
             return moves 
         
         elif public_state.state_class == StateQuality.COUNTER:
-            print("DEBUG: checking for valid counter moves")
             #movestack stores [move type, move object] with move object storing target
             last_action = public_state.movestack[-1]
-            print("DEBUG: last action would be " + str(last_action))
             if public_state.curr_player != player:
-                print("DEBUG: searching for moves")
                 if last_action[0] == MoveType.foreign_aid:
-                    print("DEBUG: foreign aid counter move offered")
                     return [CounterMoveType.inaction, CounterMoveType.foreign_aid]
                 #aside from foreign aid, other counters can only be initiated if a player is a target
                 elif last_action[1].target == player and last_action[0] in counter_index:
@@ -389,7 +383,6 @@ class MultiPlayerCoup():
         target_cards = self.agent_list[target].private_state.cards
 
         challenged_move_type = state.movestack[-2][0]
-        print(state.movestack[-2])
         challenged_influence_type = restricted_moves[challenged_move_type] if state.state_class == StateQuality.CHALLENGEACTION else restricted_countermoves[challenged_move_type]
         
         challenge_success = False
@@ -415,9 +408,6 @@ class MultiPlayerCoup():
             self.deck.append(challenged_influence_type)
         
         state.movestack[-1][1].update_success(challenge_success)
-        print('DEBUG: private states after challenge')
-        print('DEBUG: target state:' + str(self.agent_list[target].private_state))
-        print('DEBUG: initiator state:' + str(self.agent_list[initiator].private_state))
         return [state, challenge_success]
 
     #returns True/False-- True if player #target is still alive, False otherwise
@@ -549,15 +539,13 @@ class MultiPlayerCoup():
 
             #action phase
             if print_phases:
-                print("ACTION PHASE")
+                print("\nACTION PHASE")
             valid_moves = self.add_targets(self.valid_moves(curr.curr_player, curr), curr.curr_player, curr.curr_player)
             chosen_move = agents[curr.curr_player].make_move(valid_moves, curr)
             curr.movestack.append([chosen_move[0], move_objs[chosen_move[0]](curr.curr_player, chosen_move[1])])
-            if print_phases:
-                print(curr.movestack[-1])
+            #if print_phases:
+            #    print(curr.movestack[-1])
             if chosen_move[0] not in unchallengeable_moves:
-                #DEBUG
-                print(str(chosen_move[0]) + " is a challengeable move")
                 curr.state_class = StateQuality.CHALLENGEACTION
             elif chosen_move[0] not in uncounterable_moves:
                 curr.state_class = StateQuality.COUNTER
@@ -565,11 +553,11 @@ class MultiPlayerCoup():
             #challenge phase, for action
             if curr.state_class == StateQuality.CHALLENGEACTION:
                 if print_phases:
-                    print("ACTION CHALLENGE PHASE")
+                    print("\nACTION CHALLENGE PHASE")
+                    print("Last action: " + str(curr.movestack[-1][1]))
                 challenge_initiated = -1
                 for i in range(self.players):
                     if i != curr.curr_player:
-                        print("DEBUG: Player " + str(i) + " making a decision")
                         valid_moves = self.add_targets(self.valid_moves(i, curr), i, curr.curr_player)
                         chosen_move = agents[i].make_move(valid_moves, curr)
                         if chosen_move[0] == ChallengeMoveType.challenge:
@@ -580,7 +568,7 @@ class MultiPlayerCoup():
                 if challenge_initiated > -1:
                     #skip other phases and immediately evaluate result of challenge/edit state
                     if print_phases:
-                        print("Challenged by Player " + str(challenge_initiated))
+                        print("Challenge initiated by Player " + str(challenge_initiated) + "against Player " + str(curr.curr_player))
                     result = self.eval_challenge(curr, challenge_initiated, curr.curr_player)
                     curr = result[0]
                     turn_over = result[1]
@@ -598,16 +586,15 @@ class MultiPlayerCoup():
             #COUNTER PHASE
             if curr.state_class == StateQuality.COUNTER:
                 if print_phases:
-                    print("COUNTER PHASE")
+                    print("\nCOUNTER PHASE")
+                    print("Last action: " + str(curr.movestack[-1 if challenge_initiated == -1 else -2][1]))
                 counter_initiated = -1
                 for i in range(self.players):
                     if i != curr.curr_player:
-                        print("DEBUG: Player " + str(i) + " making a decision")
                         valid_moves = self.add_targets(self.valid_moves(i, curr), i, curr.movestack[-1][1].player)
                         #in the case of uncounterable moves (like exchange), no counters or further challenges
                         #counter_initiated will remain -1 and state will go to ACTION phase, completing starting action
                         if len(valid_moves) > 0:
-                            print("DEBUG: Choice to counter given")
                             chosen_move = agents[i].make_move(valid_moves, curr)
                             if chosen_move[0] != CounterMoveType.inaction:
                                 counter_initiated = i
@@ -615,7 +602,6 @@ class MultiPlayerCoup():
                                 curr.movestack.append([chosen_move[0], move_objs[chosen_move[0]](i, chosen_move[1])])
                                 break
                 if counter_initiated > -1:
-                    print("DEBUG: " + str(curr.movestack[-1][1]))
                     curr.state_class = StateQuality.CHALLENGECOUNTER
                 else:
                     #no counter initiated; skip challengecounter phase and move back to action
@@ -625,11 +611,11 @@ class MultiPlayerCoup():
             #challenge phase, for counteraction
             if curr.state_class == StateQuality.CHALLENGECOUNTER:
                 if print_phases:
-                    print("COUNTER CHALLENGE PHASE")
+                    print("\nCOUNTER CHALLENGE PHASE")
+                    print("Last counter: " + str(curr.movestack[-1][1]))
                 challenge_initiated = -1
                 for i in range(self.players):
                     if i != counter_initiated:
-                        print("Player " + str(i) + " making a decision about challenging counter")
                         valid_moves = self.add_targets(self.valid_moves(i, curr), i, curr.movestack[-1][1].player)
                         chosen_move = agents[i].make_move(valid_moves, curr)
                         if chosen_move[0] == ChallengeMoveType.challenge:
@@ -650,7 +636,6 @@ class MultiPlayerCoup():
                         turn_over = True
 
             if not turn_over:
-                print("DEBUG: evaluating actions over the course of the turn")
                 result = self.eval_turn(curr, additional_actions)
             
             for agent in self.agent_list:
@@ -660,7 +645,7 @@ class MultiPlayerCoup():
             #advance to next turn
             curr.state_class = StateQuality.ACTION
             curr.curr_player = (curr.curr_player + 1) % curr.players
-        print(winner)
+        
         return winner 
         
             

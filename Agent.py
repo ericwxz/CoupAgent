@@ -15,18 +15,13 @@ class Agent():
         self.private_state.sightings.extend(deck_cards)
         
     def lose_card(self, card):
-        print("DEBUG: losing card " + str(card))
         self.private_state.cards.remove(card)
-        print("DEBUG: current cards after losing cards: " + str(self.private_state.cards))
 
     def public_state_update(self, state, turn_actions):
         pass
 
 class RandomAgent(Agent):
     def make_move(self, valid_moves, state):
-        print("DEBUG: Random agent choosing from possible moves: ")
-        for i in valid_moves:
-            print(i)
         return random.choice(valid_moves)
 
 class HumanAgent(Agent):
@@ -38,9 +33,9 @@ class HumanAgent(Agent):
     def set_private_state(self, private_state):
         self.private_state = private_state 
         print(self.private_state)
+        print()
 
     def make_move(self, valid_moves, state):
-        print("DEBUG: own cards: " + str(self.private_state.cards))
         #possible TODO: simplify flow here
         #test for standard "choose card to lose" format
         if not isinstance(valid_moves[0], list):
@@ -69,14 +64,11 @@ class HumanAgent(Agent):
                     
                 #standard action selection
                 print(state)
-                print("Valid Moves: ")
+                print()
+                print("Player " + str(self.index) +  " needs to make a choice...")
                 #note: all moves are given as [movetype, target]
                 move_dict = {}
-                #DEBUG
-                print(valid_moves)
                 for move in valid_moves:
-                    #DEBUG
-                    print(move)
                     if move[0] not in move_dict.keys():
                         move_dict[move[0]] = []
                     move_dict[move[0]].append(move)
@@ -84,8 +76,7 @@ class HumanAgent(Agent):
 
                 if state.state_class == StateQuality.ACTION:
                     
-
-                    print("Select move type: ")
+                    print("Select basic action type: ")
                     for i in range(len(move_type_list)):
                         print(str(i) + ": " + move_type_strings[move_type_list[i]])
                     selection = int(input("Select move number:" ))
@@ -107,7 +98,7 @@ class HumanAgent(Agent):
                     return [selected_move_type, selected_target]
 
                 elif state.state_class == StateQuality.CHALLENGEACTION:
-                    print("Select move type: ")
+                    print("Select whether or not to challenge the last action: ")
                     for i in range(len(move_type_list)):
                         print(str(i) + ": " + move_type_strings[move_type_list[i]])
                     selection = int(input("Select move number:" ))
@@ -116,7 +107,7 @@ class HumanAgent(Agent):
                     return move_dict[selected_move_type][0]
 
                 elif state.state_class == StateQuality.COUNTER:
-                    print("Select move type: ")
+                    print("Select counter option: ")
                     for i in range(len(move_type_list)):
                         print(str(i) + ": " + move_type_strings[move_type_list[i]])
                     selection = int(input("Select move number:" ))
@@ -125,7 +116,7 @@ class HumanAgent(Agent):
                     return move_dict[selected_move_type][0]
 
                 elif state.state_class == StateQuality.CHALLENGECOUNTER:
-                    print("Select move type: ")
+                    print("Select whether or not to challenge the counter: ")
                     for i in range(len(move_type_list)):
                         print(str(i) + ": " + move_type_strings[move_type_list[i]])
                     selection = int(input("Select move number:" ))
@@ -134,7 +125,11 @@ class HumanAgent(Agent):
                     return move_dict[selected_move_type][0]
 
     def public_state_update(self, state, turn_actions):
-        print("Current state at the end of the turn: ")
+        print("\nCurrent state at the end of the turn: ")
         print(state)
-        for action in turn_actions:
-            print(action[1])
+        print("Actions made over the course of the past turn:")
+        for i in range(len(turn_actions)):
+            print("  " + str(i+1) + ". " + str(turn_actions[i][1]))
+        print()
+        print(str(self.private_state))
+        print("--------------------------------------------")
