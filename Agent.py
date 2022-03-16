@@ -133,3 +133,8 @@ class HumanAgent(Agent):
         print()
         print(str(self.private_state))
         print("--------------------------------------------")
+
+
+#TODO: for imperfect info agent, state simplification mostly in history->set of times a player has asserted a card, but need temporal element of exchange encoded somehow 
+#TODO: for challenge simplification, straightforward-- this plalyer has challenged this other player on having x card n times
+#TODO: perhaps including recent move history in state encoding-- temporal element of "recent history" part of state cycling out an exchange action might be enough information for black box?
