@@ -170,7 +170,7 @@ class PrivateState:
 class PublicState:
     #contains info about history, each player's coin count, and dead influence
 
-    def __init__(self, players, cards, coins, turn_counter, state_class, curr_player, action_player, movestack):
+    def __init__(self, players, cards, coins, turn_counter, state_class, curr_player, action_player, movestack, challenge_counts, recent_history):
         """PublicState(cards, coins, turn_counter, state_class, curr_player, movestack)
             players = number of players
             cards = list where the ith entry is the dead influence cards of player i
@@ -188,11 +188,13 @@ class PublicState:
         self.curr_player = curr_player
         self.action_player = action_player
         self.movestack = movestack
+        self.challenge_counts = challenge_counts
+        self.recent_history = recent_history
 
     def is_terminal(self):
         """returns -1 if not terminal, 0 if p1 wins, 1 if p2 wins"""
         alive_count = 0
-        for player in cards:
+        for player in self.cards:
             if len(player) < 2:
                 alive_count+=1
         if alive_count > 1: 
@@ -282,7 +284,11 @@ class MultiPlayerCoup():
         curr_player = 0
         action_player = 0
         movestack = []
-        return PublicState(num_players, cards, coins, turn_counter, state_class, curr_player, action_player, movestack)
+        challenge_counts = {}
+        recent_history = {}
+        for i in range(num_players):
+            recent_history[i] = [-1, -1, -1, -1, -1]
+        return PublicState(num_players, cards, coins, turn_counter, state_class, curr_player, action_player, movestack, recent_history)
 
     def add_targets(self, valid_actions, player, last_move_player):
         moves_with_targets = []
@@ -523,6 +529,7 @@ class MultiPlayerCoup():
 
     def play_game(self, print_phases=False):
         #TODO: cleanup references to agent_list
+        #TODO: add recent history management to loop
         agents = self.agent_list
         winner = -1
         while (winner := self.is_terminal(self.curr_state)) == -1:
@@ -551,6 +558,7 @@ class MultiPlayerCoup():
                 curr.state_class = StateQuality.COUNTER
 
             #challenge phase, for action
+            starting_action_type = curr.movestack[-1][0]
             if curr.state_class == StateQuality.CHALLENGEACTION:
                 if print_phases:
                     print("\nACTION CHALLENGE PHASE")
@@ -569,6 +577,14 @@ class MultiPlayerCoup():
                     #skip other phases and immediately evaluate result of challenge/edit state
                     if print_phases:
                         print("Challenge initiated by Player " + str(challenge_initiated) + "against Player " + str(curr.curr_player))
+
+                    #update record of challenges in state
+                    challenge_dict_key = (challenge_initiated, curr.curr_player, restricted_moves[starting_action_type])
+                    if challenge_dict_key not in curr.challenge_counts:
+                        curr.challenge_counts[challenge_dict_key] = 1
+                    else:
+                        curr.challenge_counts[challenge_dict_key] += 1
+
                     result = self.eval_challenge(curr, challenge_initiated, curr.curr_player)
                     curr = result[0]
                     turn_over = result[1]
