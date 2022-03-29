@@ -18,6 +18,9 @@ print(rand_agent._encode_influence(init_state))
 print("test initial state challenge history encoding:")
 print(rand_agent._encode_challenges(init_state))
 print("test initial state move history encoding:")
-
+print(rand_agent._encode_history(init_state))
 print("test initial private state encoding:")
-print(human_agent._encode_private(human_agent.private_state))
+print(human_agent._encode_private(rand_agent.private_state))
+
+print("test complete initial state encoding:")
+print(rand_agent.encode_state(init_state))

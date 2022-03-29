@@ -288,7 +288,7 @@ class MultiPlayerCoup():
         recent_history = {}
         for i in range(num_players):
             recent_history[i] = [-1, -1, -1, -1, -1]
-        return PublicState(num_players, cards, coins, turn_counter, state_class, curr_player, action_player, movestack, recent_history)
+        return PublicState(num_players, cards, coins, turn_counter, state_class, curr_player, action_player, movestack, challenge_counts, recent_history)
 
     def add_targets(self, valid_actions, player, last_move_player):
         moves_with_targets = []
@@ -529,7 +529,6 @@ class MultiPlayerCoup():
 
     def play_game(self, print_phases=False):
         #TODO: cleanup references to agent_list
-        #TODO: add recent history management to loop
         agents = self.agent_list
         winner = -1
         while (winner := self.is_terminal(self.curr_state)) == -1:
@@ -550,6 +549,11 @@ class MultiPlayerCoup():
             valid_moves = self.add_targets(self.valid_moves(curr.curr_player, curr), curr.curr_player, curr.curr_player)
             chosen_move = agents[curr.curr_player].make_move(valid_moves, curr)
             curr.movestack.append([chosen_move[0], move_objs[chosen_move[0]](curr.curr_player, chosen_move[1])])
+
+            #update recent moves
+            curr.recent_history[curr.curr_player].pop(0) 
+            curr.recent_history[curr.curr_player].append(chosen_move[0])
+
             #if print_phases:
             #    print(curr.movestack[-1])
             if chosen_move[0] not in unchallengeable_moves:
@@ -616,6 +620,11 @@ class MultiPlayerCoup():
                                 counter_initiated = i
                                 additional_actions += 1
                                 curr.movestack.append([chosen_move[0], move_objs[chosen_move[0]](i, chosen_move[1])])
+                                                    
+                                #update recent moves
+                                curr.recent_history[i].pop(0) 
+                                curr.recent_history[i].append(chosen_move[0])
+                                
                                 break
                 if counter_initiated > -1:
                     curr.state_class = StateQuality.CHALLENGECOUNTER

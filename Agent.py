@@ -29,7 +29,9 @@ class Agent():
                 #(challenges)
                 #num_players * (num_players * 2 * 5 bits to represent number of times (up to 4) a player has challenged another player on a certain card)
                 #(recent history)
-                #(num_players * 5(last actions/counters) * (11(moves/counters)*num_players)(permutations of possible actions))
+                #(num_players * 5(last actions stored) * (12(moves/counters, including null)))
+
+
         #private state space:
         #size = 5 + 5 possible cards
         num_players = state.players
@@ -38,13 +40,18 @@ class Agent():
         influence_start = 4*num_players 
         challenges_start = influence_start + 10*num_players 
         history_start = challenges_start + 10*num_players
-        private_start = history_start + (num_players * 5 * (11 * num_players))
+        #simplification: remove inaction encoding (12->11 possible action types to keep in recent memory)
+        private_start = history_start + (num_players * 5 * 11)
         state_size = private_start + 10
 
-        encoded_state = [0 for i in range(state_size)]
+        encoded_state = []
 
         #TODO
-
+        encoded_state.extend(self._encode_coins(state))
+        encoded_state.extend(self._encode_influence(state))
+        encoded_state.extend(self._encode_challenges(state))
+        encoded_state.extend(self._encode_history(state))
+        encoded_state.extend(self._encode_private(self.private_state))
 
         return encoded_state
 
@@ -80,7 +87,7 @@ class Agent():
             #indexing to the number of times player i challenged player j on card type k (from 0 to 4):
                 #the two binary digits starting at [ i*(n*2*5) + j*(2*5) + (2*k)) ]
         encoded_challenges = [0 for i in range(state.players * state.players * 2 * 5)]
-        for key in state.challenge_counts.keys:
+        for key in state.challenge_counts.keys():
             num_challenges = min(4, state.challenge_counts[key])
             #uses enum values for influence cards
             start_index = key[0]*(state.players * 2 * 5) + key[1]*(2*5) + (2*(key[2].value - 11))
@@ -91,9 +98,15 @@ class Agent():
         return encoded_challenges
 
     def _encode_history(self, state):
-        #TODO: do updating of recent history and maintenance in main state/gameplay loop
-        
-        pass
+        #simplification: remove inaction encoding
+        encoded_history = [0 for i in range(state.players * 5 * 11)]
+        for i in range(state.players):
+            for j in range(5):
+                recent_move = state.recent_history[i][j]
+                if recent_move != -1:
+                    encoded_history[i*5*11 + j*11 + (recent_move)] = 1
+                
+        return encoded_history
 
     def _encode_private(self, private_state):
         private_encoded = [0 for i in range(10)]
