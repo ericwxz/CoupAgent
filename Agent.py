@@ -21,13 +21,14 @@ class Agent():
         pass
 
     def encode_state(self, state):
+        #TODO: edit encoding of integer values as scaled weighted inputs (12ths for coins, 4ths for challenges)
         #public state space as one-hot encoding of most features 
         #size = 
-            #num_players * (4 bits to represent max coins)
+            #num_players (scaled coins)
             #num_players * (5 * 2 bits to represent flipped influence cards (all 0 for no flipped, otherwise one-hot))
             #history with simplifications:
                 #(challenges)
-                #num_players * (num_players * 2 * 5 bits to represent number of times (up to 4) a player has challenged another player on a certain card)
+                #num_players * (num_players * 1 (scaled) * 5 bits to represent number of times (up to 4) a player has challenged another player on a certain card)
                 #(recent history)
                 #(num_players * 5(last actions stored) * (12(moves/counters, including null)))
 
@@ -37,9 +38,9 @@ class Agent():
         num_players = state.players
         #list out starting indexes for each portion of information
         coins_start = 0
-        influence_start = 4*num_players 
+        influence_start = num_players 
         challenges_start = influence_start + 10*num_players 
-        history_start = challenges_start + 10*num_players
+        history_start = challenges_start + 5*num_players
         #simplification: remove inaction encoding (12->11 possible action types to keep in recent memory)
         private_start = history_start + (num_players * 5 * 11)
         state_size = private_start + 10
@@ -56,14 +57,12 @@ class Agent():
         return encoded_state
 
     def _encode_coins(self, state):
-        encoded_coins = []
+        encoded_coins = [0 for _ in range(state.players)]
         for i in range(state.players):
-            #format into binary string and split into list
-            single_coin_arr = list('{0:04b}'.format(state.coins[i]))
-            for j in range(4):
-                #convert into int values
-                single_coin_arr[j] = int(single_coin_arr[j])
-            encoded_coins.extend(single_coin_arr)
+            #at 10 coins or more, one must spend coins and coup
+            #at 9 coins, the most coins you can accumulate in a single turn is 3 more
+            #the most number of coins possibly held at once is 12
+            encoded_coins[i] = state.coins[i] / 12.0
         return encoded_coins
 
     def _encode_influence(self, state):
@@ -80,20 +79,18 @@ class Agent():
         return encoded_influence
 
     def _encode_challenges(self, state):
-        #challenge encoding as n groups of (n * 2 * 5) bits
-            #each player i has a batch of (n*2*5) bits, representing how many times they
-            #  challenged another player (2 bits) on one of 5 cards
-        #indexing to player i's batch: i*(n*2*5)
+        #challenge encoding as n groups of (n * 1 * 5) bits
+            #each player i has a batch of (n*1*5) bits, representing how many times they
+            #  challenged another player (in fourths) on one of 5 cards
+        #indexing to player i's batch: i*(n*5)
             #indexing to the number of times player i challenged player j on card type k (from 0 to 4):
-                #the two binary digits starting at [ i*(n*2*5) + j*(2*5) + (2*k)) ]
-        encoded_challenges = [0 for i in range(state.players * state.players * 2 * 5)]
+                #[ i*(n*5) + j*(5) + (k)) ]
+        encoded_challenges = [0 for i in range(state.players * state.players * 5)]
         for key in state.challenge_counts.keys():
             num_challenges = min(4, state.challenge_counts[key])
             #uses enum values for influence cards
-            start_index = key[0]*(state.players * 2 * 5) + key[1]*(2*5) + (2*(key[2].value - 11))
-            num_challenges_binlist = list('{0:02b}'.format(num_challenges))
-            encoded_challenges[start_index] = num_challenges_binlist[0]
-            encoded_challenges[start_index + 1] = num_challenges_binlist[1]
+            start_index = key[0]*(state.players * 5) + key[1]*(5) + ((key[2].value - 11))
+            encoded_challenges[start_index] = num_challenges/4.0
         
         return encoded_challenges
 
