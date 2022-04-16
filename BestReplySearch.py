@@ -85,10 +85,13 @@ class BestReplySearchAgent(Agent):
         self.game = game
 
     #turn is a true/false value 
-    def _BRS(self, alpha, beta, depth, agent_turn, node_state)
+    def _BRS(self, alpha, beta, depth, node_state)
         #BRS algo:
         #####the main drawback here is reducing certain subtrees to stochastic nodes 
         #####  without any notion of a belief state, treating outcomes with limited weighting
+        #####the algorithm also doesn't handle opponents exchanging very well
+        #####  -without any knowledge of opponents' private states and only knowledge of 
+        #####     "cards in play," exchanging as an opponent doesn't change anything actionable
 
         #if stochastic branch:
         #   for all sub-node states:
@@ -105,15 +108,11 @@ class BestReplySearchAgent(Agent):
         #
         #   if current player's turn:
         #       moves = get_moves_from_state/game
-        #       agent_turn = false
         #   else 
         #       moves = all_moves_from_all_opponents
-        #       agent_turn = true
         #
         #   for all moves:
         #       temp_state = do_move(move, game_state) -----note, resulting BRSNode may be stochastic
-        #       ------TODO: need custom do_move that presumes all other opponents income and 
-        #       ------      is flexible to multi-game-state stochastic nodes 
         #       value = -1 * BRS(-beta, -alpha, depth-1, agent_turn, temp_state)
         #       if value >= beta:
         #           return value
@@ -127,14 +126,15 @@ class BestReplySearchAgent(Agent):
             for i in range(len(node_state.public_states)):
                 public_state = node_state.public_states[i]
                 private_state = node_state.private_states[i]
-                cum_val += node_state.weight[i] * self._BRS(-1 * beta, -1 * alpha, depth-1, not agent_turn, BRSState(1, [public_state], [private_state]))
+                cum_val += node_state.weight[i] * self._BRS(-1 * beta, -1 * alpha, depth-1, BRSState(1, [public_state], [private_state]))
             if cum_val >= beta:
                 return cum_val
             alpha = max(alpha, cum_val)
             return alpha 
         
         else:
-            #TODO: modify agent_turn swapping, since no guarantee one action leads to opponent turn
+            #modify agent_turn swapping, since no guarantee one action leads to opponent turn
+            agent_turn = (node_state.public_states[0].curr_player == self.index)
             if depth <= 0:
                 return self._h(node_state.public_states[0])
 
@@ -145,17 +145,20 @@ class BestReplySearchAgent(Agent):
                     move_options = self.game.add_targets(move_types, self.index, node_state.public_states[0].action_player)
                     for move_option in move_options:
                     moves += [[move_type],[move_objs[move_type](self.index, move_option[1])]]
-                agent_turn = False 
+                
             else:
                 #TODO: add only target as agent
                 moves = self._generate_all_opponent_movesets(node_state.public_states[0])
-                agent_turn = True
+                
 
         for move in moves:
+            result = self._eval_move_set(node_state.public_states[0], node_state.private_states[0])
+            value = -1 * self._BRS(-1*beta, -1*alpha, depth-1, result)
+            if value >= beta:
+                return value 
+            alpha = max(alpha, value)
 
-
-
-        pass 
+        return alpha
 
     #########################################################
     #Private helper functions for BRS
@@ -203,7 +206,7 @@ class BestReplySearchAgent(Agent):
         else:
             self.game.valid_moves(self.index, single_public_state)
 
-    #returns a list of [action_type, action_object, player] 
+    #returns a list of [action_type, action_object] sub-lists
     def _generate_all_opponent_movesets(self, single_node_state):
         movesets = []
         game_state = single_node_state.public_states[0]
@@ -243,7 +246,8 @@ class BestReplySearchAgent(Agent):
             return -100
 
         #return some value based on the number of coins you have/ cards you have 
-        #TODO:
+        #  include some negative value based on relative wealth of opponents
+        #TODO: 
 
     #TODO: ensure state.curr_player is updated
     def _eval_move_set(node_state, action_type_list, action_obj_list):
@@ -255,11 +259,13 @@ class BestReplySearchAgent(Agent):
         #####       - [challenge/inaction, inaction, inaction...] in order
         #####       - [counter]
 
+        curr_node = node_state
         for i in range(len(action_obj_list)):
-            result_node = self._eval_action(node_state, action_type_list[i], action_obj_list[i])
+            curr_node = self._eval_action(curr_node, action_type_list[i], action_obj_list[i])
             #this is enough; same agent acting in a row isn't a concer
                 #if opponents lose a challenge, resulting node is just a stochastic state
                 #if agent loses a challenge, agent has another choice, but there are no other actions in the moveset
+                #NOTE: there will never be a series where multiple branches occur over the course of a single moveset
 
 
         return new_state
@@ -294,17 +300,16 @@ class BestReplySearchAgent(Agent):
         #note: needs to apply the action on all game states within the node_state
         #note: acts on a copy of what is given
 
-        #TODO: fix to apply to all public_states and such
         game_states = [state.copy() for state in node_state.public_states]
         private_states = [state.copy() for state in node_state.private_states]
-        weights = []
+        weights = None
 
         actor = action_obj.player
         target = action_obj.target
 
         possible_flips = self._possible_card_flips()
 
-        for i in range(len(public_states)):
+        for i in range(len(game_states)):
             public_state = game_states[i]
             private_state = private_states[i]
             #for each MoveType, add to movestack
@@ -329,15 +334,24 @@ class BestReplySearchAgent(Agent):
                         public_state.coins[target] -= stolen_coins
                         public_state.coins[state.curr_player] += stolen_coins
 
-                        game_states.append(public_state)
-                        private_states.append(private_state)
+                        game_states[i] = public_state
+                        private_states[i] = private_state
                 elif action_type == MoveType.coup:
                     public_state.coins[actor] -= 7
-                    #TODO: populate stochastic game_states
-
+                    res_states = self._stochastic_influence_loss(public_state, private_state, possible_flips, action_obj.target)
+                    for public_state in res_states.public_states:
+                        public_state.state_class = StateQuality.CHALLENGEACTION
+                        public_state.curr_player = (public_state.curr_player+1)%public_state.num_players
+                        public_state.action_player = actor
+                    return res_states
                 elif action_type == MoveType.assassin:
                     public_state.coins[actor] -= 3
-                    #TODO: populate stochastic game_states
+                    res_states = self._stochastic_influence_loss(public_state, private_state, possible_flips, action_obj.target)
+                    for public_state in res_states.public_states:
+                        public_state.state_class = StateQuality.CHALLENGEACTION
+                        public_state.curr_player = (public_state.curr_player+1)%public_state.num_players
+                        public_state.action_player = actor
+                    return res_state
 
                 #separate these two evaluations because of the difference in state quality change
                 if action_type != MoveType.exchange:
@@ -346,63 +360,253 @@ class BestReplySearchAgent(Agent):
                 else: 
                     #action_type == MoveType.exchange
                     public_state.state_class = StateQuality.EXCHANGE
-                    game_states.append(public_state)
-                    private_states.append(private_state)
-                    
+                
                 public_state.action_player = actor
+                game_states[i] = public_state
+                private_states[i] = private_state
+                return BRSState(len(game_states), game_states, private_states, weights)
+                    
 
                 
             elif isinstance(action_type, ChallengeMoveType):
                 if action_obj[1].target == self.index:
-                    self._eval_challenge_against_agent(public_state, private_state)
+                    return self._eval_challenge_against_agent(public_state, private_state)
                 else:
-                    self._agent_challenge_possibilities(public_state, private_state, action_obj[1].target)
+                    return self._agent_challenge_possibilities(public_state, private_state, action_obj[1].target)
 
             elif isinstance(action_type, CounterMoveType):
                 
                 #iterate backwards thru movestack until we get to an instance of MoveType, then reverse that move
                 target_counter_type = MoveType.income
-                #TODO: loop back
+                i = -1
+                while (not isinstance(public_state.movestack[i][0], MoveType))
+                    i-=1
+                target_counter_type = public_state.movestack[i][0]
                 if target_counter_type == MoveType.foreign_aid:
-                    
+                    public_state.coins[action_obj.target] = max(0, public_state.coins[action_obj.target]-2)
                 elif target_counter_type == MoveType.steal:
-                    
+                    public_state.coins[action_obj.target] += action_obj.steal_amount 
+                    public_state.coins[action_obj.player] -= action_obj.steal_amount
                 elif target_counter_type == MoveType.assassin:
+                    #reverse last flip
+                    if public_state.cards[action_obj.target][1] != -1:
+                        public_state.cards[action_obj.target][1] = -1
+                    else:
+                        public_state.cards[action_obj.target][0] = -1
                     
             elif isinstance(action_type, LoseInfluenceMoveType):
-                #TODO:
-                    
+                #TODO: choice of losing a card, only called for the agent
+                if action_type == LoseInfluenceMoveType.LOSE_DUKE:
+                    private_state.cards.remove(InfluenceType.duke)
+                    self._brs_update_states_lose_card(public_state, self.index, InfluenceType.duke)
+                elif action_type == LoseInfluenceMoveType.LOSE_CAPTAIN:
+                    private_state.cards.remove(InfluenceType.captain)
+                    self._brs_update_states_lose_card(public_state, self.index, InfluenceType.captain)
+                elif action_type == LoseInfluenceMoveType.LOSE_ASSASSIN:
+                    private_state.cards.remove(InfluenceType.assassin)
+                    self._brs_update_states_lose_card(public_state, self.index, InfluenceType.assassin)
+                elif action_type == LoseInfluenceMoveType.LOSE_CONTESSA:
+                    private_state.cards.remove(InfluenceType.contessa)
+                    self._brs_update_states_lose_card(public_state, self.index, InfluenceType.contessa)
+                elif action_type == LoseInfluenceMoveType.LOSE_AMBASSADOR:
+                    private_state.cards.remove(InfluenceType.ambassador)
+                    self._brs_update_states_lose_card(public_state, self.index, InfluenceType.ambassador)
+            
+        return BRSState(len(game_states), game_states, private_states, weights)
 
-        return ret_state
 
+    def _stochastic_influence_loss(self, public_state, private_state, possible_flips, target):
+        """Returns a BRS node with multiple game states and weights"""
+        num_dukes = possible_flips.count(InfluenceType.duke)
+        num_captains = possible_flips.count(InfluenceType.captain)
+        num_assassins = possible_flips.count(InfluenceType.assassin)
+        num_contessas = possible_flips.count(InfluenceType.contessa)
+        num_ambassadors = possible_flips.count(InfluenceType.ambassador)
+        public_states = []
+        num_flippable = len(possible_flips)
+        if num_dukes > 0:
+            duke_state = public_state.copy()
+            self._brs_update_states_lose_card(duke_state, target, InfluenceType.duke)
+            public_states.append(duke_state)
+            weights.append(num_dukes/num_flippable)
+        
+        if num_captains > 0:
+            captain_state = public_state.copy()
+            self._brs_update_states_lose_card(captain_state, target, InfluenceType.captain)
+            public_states.append(captain_state)
+            weights.append(num_captains/num_flippable)
+
+        if num_assassins > 0:
+            assassin_state = public_state.copy()
+            self._brs_update_states_lose_card(assassin_state, target, InfluenceType.assassin)
+            public_states.append(assassin_state)
+            weights.append(num_assassins/num_flippable)
+
+        if num_contessas > 0:
+            contessa_state = public_state.copy()
+            self._brs_update_states_lose_card(contessa_state, target, InfluenceType.contessa)
+            public_states.append(contessa_state)
+            weights.append(num_contessas/num_flippable)
+
+        if num_ambassadors > 0:
+            ambassador_state = public_state.copy()
+            self._brs_update_states_lose_card(ambassador_state, target, InfluenceType.ambassador)
+            public_states.append(ambassador_state)
+            weights.append(num_ambassadors/num_flippable)
+        
+        private_states = [private_state.copy() for _ in range(len(public_states))]
+
+        return BRSState(len(public_states), public_states, private_states, weights)
+        
+
+    def _brs_update_states_lose_card(self, state, loser, chosen_discard):
+        #update public state with the flipped card
+        if state.cards[loser][0] != -1:
+            state.cards[loser][1] = chosen_discard 
+        else:
+            state.cards[loser][0] = chosen_discard
+
+
+    ##########################################################
+    #NOTE: return a new BRSNode state for challenge evaluation helpers
 
     def _eval_challenge_against_agent(self, public_state, private_state):
         """checks movestack to find the challenged card and evaluates outcome"""
         last_action_type = public_state.movestack[-2][0]
         challenge_initiator = public_state.movestack[-1][1].player
+
+        possible_flips = self._possible_card_flips(public_state, private_state)
+        
         if isinstance(last_action_type, MoveType):
             last_restricted_card = restricted_moves[last_action_type]
         else:
             last_restricted_card = restricted_countermoves[last_action_type]
         
-        if last_restricted_card == InfluenceType.ambassador:
-            #TODO: add info on the cards exchanged to the move object to undo exchange first
+        hand_to_check = private_state.cards
 
-        if last_restricted_card in private_state.cards:
-            #5 possible outcomes-- stochastic node
-            #   2 stochastic elements: the card you get after reshuffling and the card that gets flipped
+        next_state_class = StateQuality.ACTION
+        next_player = (public_state.curr_player+1)%public_state.num_players
+        if public_state.state_class == StateQuality.CHALLENGEACTION:
+            next_state_class = StateQuality.COUNTER
+
+        if last_restricted_card == InfluenceType.ambassador:
+            next_state_class = StateQuality.EXCHANGE
+            next_player = self.index
+            action_obj = public_state.movestack[-2][1]
+            if len(action_obj.to_deck) != 0:
+                #cards were exchanged by agent; undo exchange in a temp setting to
+                #  evaluate whether ambassador card was present 
+                temp_hand = private_state.cards.copy()
+                for card in action_obj.from_deck:
+                    temp_hand.remove(card)
+                    possible_flips.append(card)
+                for card in action_obj.to_deck:
+                    temp_hand.add(card)
+                    possible_flips.remove(card)
+                hand_to_check = temp_hand
+
+        #if agent wins challenge, make relevant opponent lose a card
+        if last_restricted_card in hand_to_check:
+            #2 stochastic elements: the card you get after reshuffling and the card that gets flipped
             #TODO: implement all possible new private states as well as all possible public flips, return
             #   node with all those possible states
+            hand_to_check.remove(last_restricted_card)
 
-        if last_restricted_card == InfluenceType.ambassador:
-            #TODO: re-exchange after shuffle
+            public_states = []
+            private_states = []
+            weights = []
+
+            for i in set(possible_flips):
+                num_i = possible_flips.count(i)
+                weight_i = num_i / len(possible_flips)
+                new_private = private_state.copy()
+                new_private.cards = hand_to_check.append(i)
+                
+                #create new weights/probabilities for opponent losing cards
+                temp_flips = possible_flips.copy().remove(i)
+                for j in set(temp_flips):
+                    num_j = temp_flips.remove(j)
+                    weight_j = num_j / len(temp_flips)
+                    new_public = public_state.copy()
+                    new_public.state_class = next_state_class
+                    new_public.curr_player = next_player
+
+                    self._brs_update_states_lose_card(public_state, challenge_initiator, j)
+                    public_states.append(new_public)
+                    private_states.append(new_private.copy())
+                    weights.append(weight_i * weight_j)
+                    
+
+            return BRSState(len(public_states), public_states, private_states, weights)
 
         else:
-            #TODO: agent just loses the card-- single outcome, generate a new state for agent 
+            #agent just loses the card-- single outcome, generate a new state for agent 
             #   to choose card to lose
+            new_public = public_state.copy()
+            new_private = private_state.copy()
+            new_public.state_class = ExtendedStateQuality.LOSE_CARD 
+            return new BRSState(1, new_public, new_private)
 
 
     def _agent_challenge_possibilities(public_state, private_state, target):
         """returns a stochastic BRS state for the result of challenging a target"""
+        last_action_type = public_state.movestack[-2][0]
+
+        hand_size = public_state.cards[target].count(-1)
+
+        possible_flips = self._possible_card_flips(public_state, private_state)
+        total_unknown = len(possible_flips)
         
-        pass 
+        if isinstance(last_action_type, MoveType):
+            last_restricted_card = restricted_moves[last_action_type]
+        else:
+            last_restricted_card = restricted_countermoves[last_action_type]
+
+        #evaluate probability that the challenged card may be held by this particular agent
+        # simple evaluation that may become more sophisticated: 
+        #    for 2-card hands, probability that either card is the target - probability of both 
+        #    for 1-card hands, just probability of 1
+        
+        public_states = []
+        private_states = []
+        weights = []
+
+        #evaluate challenge lose states-- probability the card is held
+            #when opponent shuffles, we don't actually change anything except state class to LOSE_CARD
+        num_challenged_card = possible_flips.count(last_restricted_card)
+        if hand_size == 1:
+            probability_lost = num_challenged_card/total_unknown
+        else: 
+            #hand_size == 2
+            probability_lost = (num_challenged_card/total_unknown) + (0 if num_challenged_card <= 1 else 1/total_unknown)
+                - (0 if num_challenged_card <=1 else num_challenged_card/(total_unknown^2))
+        lose_public_state = public_state.copy()
+        public_state.state_class = ExtendedStateQuality.LOSE_CARD 
+        lose_private_state = private_state.copy()
+        public_states.append(lose_public_state)
+        private_states.append(lose_private_state)
+        weights.append(probability_lost)
+
+        #evaluate the diff states if opponent loses challenge
+        for card in set(possible_flips):
+            if card != last_restricted_card:
+                num_card = possible_flips.count(card)
+                if hand_size == 1:
+                    weights.append(num_card/total_unknown)
+                else:
+                    weights.append((num_card/total_unknown) + (0 if num_card <= 1 else 1/total_unknown)
+                        - (0 if num_card <=1 else num_card/(total_unknown^2)))
+                #flip the card in question
+                new_public = public_state.copy() 
+                new_private = private_state.copy()
+                self._brs_update_states_lose_card(new_public, target, card)
+                public_states.append(new_public)
+                private_states.append(new_private)
+        
+        return BRSState(len(public_states), public_states, private_states, weights)
+
+
+
+        
+        
+

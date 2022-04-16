@@ -56,6 +56,8 @@ move_type_strings = {MoveType.income:"Income",MoveType.foreign_aid:"Foreign Aid"
 
 #move-specific class definitions are artifacts of an older "simplified 2-player coup" implementation
 class BaseMove:
+    #NOTE: additional functions for specific moves that don't have to do with __repr__
+    #    are for individual computational agents to manage information in their game trees
     def __init__(self, player, target):
         self.player = player 
         self.target = target
@@ -79,6 +81,9 @@ class StealMove(BaseMove):
         return "Player " + str(self.player) + " stole from Player " + str(self.target) + " (Captain)"
 
 class ExchangeMove(BaseMove):
+    def set_exchange_info(self, from_deck, to_deck):
+        self.from_deck = from_deck 
+        self.to_deck = to_deck
     def __repr__(self): 
         return "Player " + str(self.player) + " exchanged with the deck"
 
