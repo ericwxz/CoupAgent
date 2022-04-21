@@ -51,7 +51,7 @@ lose_card_move_objs = {LoseInfluenceMoveType.LOSE_DUKE:LoseDukeMove,
                         LoseInfluenceMoveType.LOSE_CONTESSA:LoseContessaMove,
                         LoseInfluenceMoveType.LOSE_AMBASSADOR:LoseAmbassadorMove}
 
-extended_move_objs = dict(move_objs, **lose_card_move_objs)
+extended_move_objs = move_objs | lose_card_move_objs
 
 
 ################################################
@@ -85,7 +85,7 @@ class BestReplySearchAgent(Agent):
         self.game = game
 
     #turn is a true/false value 
-    def _BRS(self, alpha, beta, depth, node_state)
+    def _BRS(self, alpha, beta, depth, node_state):
         #BRS algo:
         #####the main drawback here is reducing certain subtrees to stochastic nodes 
         #####  without any notion of a belief state, treating outcomes with limited weighting
@@ -126,7 +126,7 @@ class BestReplySearchAgent(Agent):
             for i in range(len(node_state.public_states)):
                 public_state = node_state.public_states[i]
                 private_state = node_state.private_states[i]
-                cum_val += node_state.weight[i] * self._BRS(-1 * beta, -1 * alpha, depth-1, BRSState(1, [public_state], [private_state]))
+                cum_val += node_state.weight[i] * self._BRS(-1 * beta, -1 * alpha, depth, BRSState(1, [public_state], [private_state]))
             if cum_val >= beta:
                 return cum_val
             alpha = max(alpha, cum_val)
@@ -144,7 +144,7 @@ class BestReplySearchAgent(Agent):
                 for move_type in move_types:
                     move_options = self.game.add_targets(move_types, self.index, node_state.public_states[0].action_player)
                     for move_option in move_options:
-                    moves += [[move_type],[move_objs[move_type](self.index, move_option[1])]]
+                        moves += [[move_type],[move_objs[move_type](self.index, move_option[1])]]
                 
             else:
                 #TODO: add only target as agent
@@ -237,9 +237,9 @@ class BestReplySearchAgent(Agent):
 
         return movesets
 
-    def _h(self, node_state):
-        #simple heurisic for the state
-        curr_terminal_status = state.is_terminal()
+    def _h(self, public_state):
+        #simple heurisic for the state, can be adjusted; current numerical measures are arbitrary
+        curr_terminal_status = public_state.is_terminal()
         if curr_terminal_status == self.index:
             return 100
         elif curr_terminal_status != -1:
@@ -247,7 +247,36 @@ class BestReplySearchAgent(Agent):
 
         #return some value based on the number of coins you have/ cards you have 
         #  include some negative value based on relative wealth of opponents
-        #TODO: 
+        curr_value = 0
+        #eval own cards and ascribe some value to them
+        own_cards_num = public_state.cards[self.index].count(-1)
+        if own_cards_num == 0:
+            return -100
+        elif own_cards_num == 2:
+            curr_value += 50
+        #eval own coins and ascribe some value to them
+        own_coins = public_state.coins[self.index]
+        curr_value += coins*3 #arbitrary
+
+        #bonuses for reaching coin benchmarks enabling further action
+        if own_coins >= 3:
+            curr_value += 5
+        if own_coins >= 7:
+            curr_value += 5
+
+        #eval number of opponent cards and coins in play
+        total_opp_cards = 0
+        total_opp_coins = 0
+        for i in range(public_state.players):
+            if i != self.index:
+                total_opp_cards += public_state.cards[i].count(-1)
+                total_opp_coins += public_state.coins[i]
+        average_cards_per_opp = total_opp_cards/(public_state.players - 1)
+        curr_val += (own_cards_num - average_cards_per_opp) * 50 
+
+        #eval collective wealth of opponents
+        average_coins_per_opp = total_opp_coins/ (public_state.players - 1)
+        curr_val += (own_coins_num - average_cards_per_opp) * 10
 
     #TODO: ensure state.curr_player is updated
     def _eval_move_set(node_state, action_type_list, action_obj_list):
@@ -379,7 +408,7 @@ class BestReplySearchAgent(Agent):
                 #iterate backwards thru movestack until we get to an instance of MoveType, then reverse that move
                 target_counter_type = MoveType.income
                 i = -1
-                while (not isinstance(public_state.movestack[i][0], MoveType))
+                while (not isinstance(public_state.movestack[i][0], MoveType)):
                     i-=1
                 target_counter_type = public_state.movestack[i][0]
                 if target_counter_type == MoveType.foreign_aid:
@@ -545,7 +574,7 @@ class BestReplySearchAgent(Agent):
             new_public = public_state.copy()
             new_private = private_state.copy()
             new_public.state_class = ExtendedStateQuality.LOSE_CARD 
-            return new BRSState(1, new_public, new_private)
+            return BRSState(1, new_public, new_private)
 
 
     def _agent_challenge_possibilities(public_state, private_state, target):
@@ -578,8 +607,7 @@ class BestReplySearchAgent(Agent):
             probability_lost = num_challenged_card/total_unknown
         else: 
             #hand_size == 2
-            probability_lost = (num_challenged_card/total_unknown) + (0 if num_challenged_card <= 1 else 1/total_unknown)
-                - (0 if num_challenged_card <=1 else num_challenged_card/(total_unknown^2))
+            probability_lost = (num_challenged_card/total_unknown) + (0 if num_challenged_card <= 1 else 1/total_unknown) - (0 if num_challenged_card <=1 else num_challenged_card/(total_unknown^2))
         lose_public_state = public_state.copy()
         public_state.state_class = ExtendedStateQuality.LOSE_CARD 
         lose_private_state = private_state.copy()

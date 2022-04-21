@@ -175,7 +175,7 @@ class PrivateState:
         return repr_str
 
     def copy(self):
-        return new PrivateState(self.cards, self.sightings)
+        return PrivateState(self.cards, self.sightings)
 
 class PublicState:
     #contains info about history, each player's coin count, and dead influence
@@ -239,7 +239,7 @@ class PublicState:
 
     def copy(self):
         """Returns a copy of the current state"""
-        return new PublicState(self.players, self.cards, self.coins, self.turn_counter, self.state_class, self.curr_player, self.action_player, 
+        return PublicState(self.players, self.cards, self.coins, self.turn_counter, self.state_class, self.curr_player, self.action_player, 
                     self.movestack, self.challenge_counts, self.recent_history)
 
     def __repr__(self):
