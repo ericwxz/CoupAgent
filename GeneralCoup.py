@@ -65,6 +65,9 @@ class BaseMove:
     def execute(self, curr_state):
         """"""
         pass
+    
+    def __repr__(self):
+        return "Player " + str(self.player) + " passed"
 
 class TaxMove(BaseMove):
     def __repr__(self):
@@ -483,6 +486,8 @@ class MultiPlayerCoup():
         #possible TODO: edit encoding of possible exchange moves
         elif starting_action[0] == MoveType.exchange:
             if self.check_target_aliveness(state, target):
+                #make explicit that the make_move call happens for an exchange, which passes possible moves uniquely
+                self.state_class = StateQuality.EXCHANGE
                 deck_top = self.show_deck_top() 
                 possible_exchanges = [[-1]]
                 #generate possible exchanges in the form [held card to switch, new card from deck]
