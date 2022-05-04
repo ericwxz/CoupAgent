@@ -1,4 +1,4 @@
-from Agent import Agent 
+from Agent import *
 from GeneralCoup import *
 import itertools
 
@@ -6,55 +6,6 @@ import itertools
 ###Additional Info useful for BRS implementation
 DEPTH = 6
 
-class ExtendedStateQuality(enum.Enum):
-    LOSE_CARD = 5
-
-class LoseInfluenceMoveType(enum.Enum):
-    LOSE_DUKE = 12
-    LOSE_CAPTAIN = 13
-    LOSE_ASSASSIN = 14
-    LOSE_CONTESSA = 15
-    LOSE_AMBASSADOR = 16
-
-class LoseDukeMove(BaseMove):
-    #for consistency, target is included as an init field but should =player
-    def __init__(self, player, target):
-        self.card_type = InfluenceType.duke
-        BaseMove.__init__(player, target)
-    
-class LoseCaptainMove(BaseMove):
-    def __init__(self, player, target):
-        self.card_type = InfluenceType.captain
-        BaseMove.__init__(player, target)
-
-class LoseAssassinMove(BaseMove):
-    def __init__(self, player, target):
-        self.card_type = InfluenceType.assassin
-        BaseMove.__init__(player, target)
-
-class LoseContessaMove(BaseMove):
-    def __init__(self, player, target):
-        self.card_type = InfluenceType.contessa
-        BaseMove.__init__(player, target)
-
-class LoseAmbassadorMove(BaseMove):
-    def __init__(self, player, target):
-        self.card_type = InfluenceType.ambassador
-        BaseMove.__init__(player, target)
-
-lose_influence_type = {InfluenceType.duke:LoseInfluenceMoveType.LOSE_DUKE,
-                        InfluenceType.captain:LoseInfluenceMoveType.LOSE_CAPTAIN,
-                        InfluenceType.assassin:LoseInfluenceMoveType.LOSE_ASSASSIN,
-                        InfluenceType.contessa:LoseInfluenceMoveType.LOSE_CONTESSA,
-                        InfluenceType.ambassador:LoseInfluenceMoveType.LOSE_AMBASSADOR}
-
-lose_card_move_objs = {LoseInfluenceMoveType.LOSE_DUKE:LoseDukeMove,
-                        LoseInfluenceMoveType.LOSE_CAPTAIN:LoseCaptainMove,
-                        LoseInfluenceMoveType.LOSE_ASSASSIN:LoseAssassinMove,
-                        LoseInfluenceMoveType.LOSE_CONTESSA:LoseContessaMove,
-                        LoseInfluenceMoveType.LOSE_AMBASSADOR:LoseAmbassadorMove}
-
-extended_move_objs = move_objs | lose_card_move_objs
 
 class BRSState:
     #wrapper around game state that formats for BRS
@@ -113,7 +64,6 @@ class BestReplySearchAgent(Agent):
         #for CLI printing purposes
         self.index = index
                 
-
     def make_move(self, valid_moves, game_state):
         #potentially implement Best Reply Search? essentially paranoid but can implement longer planning
             #assume coalition collectively agrees to make best move, everyone else passes   
@@ -234,11 +184,16 @@ class BestReplySearchAgent(Agent):
                     print("DEBUG moves resulting from normal evaluation for agent")
                     #normal evaluation
                     move_types = self._extended_valid_moves(self.index, node_state.public_states[0], node_state.moves)
+                    print("DEBUG: move types: " + str(move_types))
+                    print("DEBUG: state " + str(node_state.public_states[0]))
+                    print("DEBUG: state class " + str(node_state.public_states[0].state_class))
+                    print("DEBUG: player choice for " + str(node_state.public_states[0].curr_player))
                     moves = []
                     for move_type in move_types:
                         move_options = self.game.add_targets(move_types, self.index, node_state.public_states[0].action_player, node_state.public_states[0])
                         for move_option in move_options:
                             moves.append([[move_type],[move_objs[move_type](self.index, move_option[1])]])
+                    print("DEBUG moves from above: " + str(moves))
                 else:
                     print("DEBUG moves stored exchange possibilities")
                     #moves should be stored in state
@@ -297,7 +252,9 @@ class BestReplySearchAgent(Agent):
         #     -note: requires private state in order to accomplish lose_card functionality
 
     def _extended_valid_moves(self, player, single_public_state, private_state, moves=None):
-        if single_public_state.state_class == ExtendedStateQuality.LOSE_CARD:
+        public_copy = single_public_state.copy()
+        public_copy.curr_player = player
+        if public_copy.state_class == ExtendedStateQuality.LOSE_CARD:
             move_types = []
             if private_state != None:
                 #if agent, return just the possibilities from private state
@@ -306,17 +263,18 @@ class BestReplySearchAgent(Agent):
                 
             else: 
                 #if opponent, return possibilities based on what might be in the deck
-                possible_flips = set(self._possible_card_flips(single_public_state, private_state))
+                possible_flips = set(self._possible_card_flips(public_copy, private_state))
                 for card in possible_flips:
                     move_types.append(lose_influence_type[card])
 
             return move_types
         
-        elif single_public_state.state_class == StateQuality.EXCHANGE:
+        elif public_copy.state_class == StateQuality.EXCHANGE:
             #return stored valid moves from state
             return moves
 
         else:
+            print("checking game valid_moves function")
             return self.game.valid_moves(player, single_public_state)
 
     def _add_opponent_targets(self, valid_actions, player, last_move_player):
@@ -356,11 +314,7 @@ class BestReplySearchAgent(Agent):
                         #generate a "moveset" in order from the player after the agent
                         #   with agent i making this move and all others passing
                         move_type_set = [pass_action for j in range(game_state.players - 1)]
-                        #try:
                         move_type_set[i-self.index-1] = move_type 
-                        #except Exception as e:
-                        #    print("index error for i-self.index = " + str(i-self.index) + " with i=" + str(i))
-                        #    raise e
                         move_object_set = [move_objs[j](i,i) for j in move_type_set]
                         move_object_set[i-self.index-1] = move_objs[move_type](i, move_info[1])
                         movesets.append([move_type_set, move_object_set])
@@ -465,7 +419,8 @@ class BestReplySearchAgent(Agent):
         #print("DEBUG: evaluating action type " + str(action_type))
         game_states = [state.copy() for state in node_state.public_states]
         private_states = [state.copy() for state in node_state.private_states]
-
+        print("DEBUG: evaluating " + str(action_obj))
+        print("DEBUG: action eval on movestack: " + str(node_state.public_states[0].movestack))
         #separate states to work on and possible expansion in number of states
         res_public_states = []
         res_private_states = []
@@ -494,6 +449,7 @@ class BestReplySearchAgent(Agent):
                     private_state.cards.remove(action_obj.to_deck)
                     private_state.cards.append(action_obj.from_deck)
                     public_state.state_class = StateQuality.CHALLENGEACTION
+                    public_state.curr_player = (public_state.curr_player + 1) % public_state.players
                 
             else:
                 if isinstance(action_type, MoveType):
@@ -571,10 +527,22 @@ class BestReplySearchAgent(Agent):
                             return self._agent_challenge_possibilities(public_state, private_state, action_obj.target)
                     #elif (actor + 1) % public_state.players == target:
                     else:
-                        if public_state.state_class == StateQuality.CHALLENGEACTION:
-                            public_state.state_class = StateQuality.COUNTER 
+                        #if target was self, iterate curr_player and only change states if iterating reaches self.index
+                        if action_obj.target == self.index:  
+                            public_state.curr_player = public_state.curr_player = (public_state.curr_player + 1) % public_state.players
+                            if public_state.curr_player == self.index:
+                                if public_state.state_class == StateQuality.CHALLENGEACTION:
+                                    public_state.state_class = StateQuality.COUNTER 
+                                else:
+                                    public_state.state_class = StateQuality.ACTION
+                                    public_state.curr_player = public_state.curr_player = (public_state.curr_player + 1) % public_state.players
+                        #if target was an opponent (initiated by self), state changes
                         else:
-                            public_state.state_class = StateQuality.ACTION
+                            if public_state.state_class == StateQuality.CHALLENGEACTION:
+                                public_state.state_class = StateQuality.COUNTER 
+                            else:
+                                public_state.state_class = StateQuality.ACTION
+                                ublic_state.curr_player = (public_state.curr_player + 1) % public_state.players
                     
 
                 elif isinstance(action_type, CounterMoveType):
@@ -809,9 +777,3 @@ class BestReplySearchAgent(Agent):
                 private_states.append(new_private)
         
         return BRSState(len(public_states), public_states, private_states, weights)
-
-
-
-        
-        
-

@@ -84,6 +84,11 @@ class StealMove(BaseMove):
         return "Player " + str(self.player) + " stole from Player " + str(self.target) + " (Captain)"
 
 class ExchangeMove(BaseMove):
+    def __init__(self, player, target):
+        self.from_deck = None 
+        self.to_deck = None
+        BaseMove.__init__(self, player, target)
+
     def set_exchange_info(self, from_deck, to_deck):
         self.from_deck = from_deck 
         self.to_deck = to_deck
@@ -205,7 +210,7 @@ class PublicState:
         self.recent_history = recent_history
 
     def is_terminal(self):
-        """returns -1 if not terminal, 0 if p1 wins, 1 if p2 wins"""
+        """returns -1 if not terminal, otherwise index of player"""
         alive_count = self.players
         alive_ind = -1
         for i in range(self.players):
@@ -352,7 +357,7 @@ class MultiPlayerCoup():
         elif public_state.state_class == StateQuality.COUNTER:
             #movestack stores [move type, move object] with move object storing target
             last_action = public_state.movestack[-1]
-            if public_state.curr_player != player:
+            if public_state.curr_player != public_state.action_player:
                 if last_action[0] == MoveType.foreign_aid:
                     return [CounterMoveType.inaction, CounterMoveType.foreign_aid]
                 #aside from foreign aid, other counters can only be initiated if a player is a target
@@ -553,11 +558,11 @@ class MultiPlayerCoup():
         return self.is_terminal(state)
 
 
-    def play_game(self, print_phases=False):
-        #TODO: cleanup references to agent_list
+    def play_game(self, print_phases=False, depth=-1):
         agents = self.agent_list
         winner = -1
-        while (winner := self.is_terminal(self.curr_state)) == -1:
+        curr_depth = 0
+        while (winner := self.is_terminal(self.curr_state)) == -1 and (depth < 0 or curr_depth < depth):
             curr = self.curr_state
             while curr.cards[curr.curr_player][0] != -1 and curr.cards[curr.curr_player][1] != -1:
                 #loop over dead players where both cards are flipped; continue until we get to a player with at least one unturned influence

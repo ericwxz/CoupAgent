@@ -1,5 +1,63 @@
 import random
 from GeneralCoup import *
+
+#######################################
+# extra definitions not used in game implementation 
+# that may be useful for agents
+
+class ExtendedStateQuality(enum.Enum):
+    LOSE_CARD = 5
+    LOSE_CARD_ACTION = 6
+    LOSE_CARD_CHALLENGE_ACTION = 7
+    LOSE_CARD_CHALLENGE_COUNTER = 8
+
+class LoseInfluenceMoveType(enum.Enum):
+    LOSE_DUKE = 12
+    LOSE_CAPTAIN = 13
+    LOSE_ASSASSIN = 14
+    LOSE_CONTESSA = 15
+    LOSE_AMBASSADOR = 16
+
+class LoseDukeMove(BaseMove):
+    #for consistency, target is included as an init field but should =player
+    def __init__(self, player, target):
+        self.card_type = InfluenceType.duke
+        BaseMove.__init__(player, target)
+    
+class LoseCaptainMove(BaseMove):
+    def __init__(self, player, target):
+        self.card_type = InfluenceType.captain
+        BaseMove.__init__(player, target)
+
+class LoseAssassinMove(BaseMove):
+    def __init__(self, player, target):
+        self.card_type = InfluenceType.assassin
+        BaseMove.__init__(player, target)
+
+class LoseContessaMove(BaseMove):
+    def __init__(self, player, target):
+        self.card_type = InfluenceType.contessa
+        BaseMove.__init__(player, target)
+
+class LoseAmbassadorMove(BaseMove):
+    def __init__(self, player, target):
+        self.card_type = InfluenceType.ambassador
+        BaseMove.__init__(player, target)
+
+lose_influence_type = {InfluenceType.duke:LoseInfluenceMoveType.LOSE_DUKE,
+                        InfluenceType.captain:LoseInfluenceMoveType.LOSE_CAPTAIN,
+                        InfluenceType.assassin:LoseInfluenceMoveType.LOSE_ASSASSIN,
+                        InfluenceType.contessa:LoseInfluenceMoveType.LOSE_CONTESSA,
+                        InfluenceType.ambassador:LoseInfluenceMoveType.LOSE_AMBASSADOR}
+
+lose_card_move_objs = {LoseInfluenceMoveType.LOSE_DUKE:LoseDukeMove,
+                        LoseInfluenceMoveType.LOSE_CAPTAIN:LoseCaptainMove,
+                        LoseInfluenceMoveType.LOSE_ASSASSIN:LoseAssassinMove,
+                        LoseInfluenceMoveType.LOSE_CONTESSA:LoseContessaMove,
+                        LoseInfluenceMoveType.LOSE_AMBASSADOR:LoseAmbassadorMove}
+
+extended_move_objs = move_objs | lose_card_move_objs
+
 class Agent():
     def __init__(self):
         self.private_state = None
@@ -21,7 +79,6 @@ class Agent():
         pass
 
     def encode_state(self, state):
-        #TODO: edit encoding of integer values as scaled weighted inputs (12ths for coins, 4ths for challenges)
         #public state space as one-hot encoding of most features 
         #size = 
             #num_players (scaled coins)
@@ -31,7 +88,7 @@ class Agent():
                 #num_players * (num_players * 1 (scaled) * 5 bits to represent number of times (up to 4) a player has challenged another player on a certain card)
                 #(recent history)
                 #(num_players * 5(last actions stored) * (12(moves/counters, including null)))
-
+            #number of distinct states used in evaluation, one-hot (6)
 
         #private state space:
         #size = 5 + 5 possible cards
@@ -43,19 +100,49 @@ class Agent():
         history_start = challenges_start + 5*num_players
         #simplification: remove inaction encoding (12->11 possible action types to keep in recent memory)
         private_start = history_start + (num_players * 5 * 11)
-        state_size = private_start + 10
+        quality_start = private_start + 5
+        state_size = quality_start + 6
 
         encoded_state = []
 
-        #TODO
         encoded_state.extend(self._encode_coins(state))
         encoded_state.extend(self._encode_influence(state))
         encoded_state.extend(self._encode_challenges(state))
         encoded_state.extend(self._encode_history(state))
         encoded_state.extend(self._encode_private(self.private_state))
+        encoded_state.extend(self._encode_state_class(state))
 
         return encoded_state
+    """
+    def encode_action(self, action_type, target, num_players, extra_info=None):
+        #TODO:
+        #extra_info = action_object if needed for exchange
+        #encode all possible actions that could be passed by make_move
+        #assume all actions, including exchaning cards and choosing a card to lose
 
+        #for different modes, we designate a three bit one-hot at the start of the encoding
+        action_mode = [0, 0, 0]
+        len_mode_encoding = 3
+        #number of action_types in playbook: 13
+        #number of targets: num_players
+        #max encoding size: 13 + num_players
+        full_encoding = [0 for i in range()]#TODO)]
+        if isinstance(action_type, LoseInfluenceMoveType):
+            #encode one-hot encoding of choices for cards to lose; 0-4
+            action_mode[2] = 1
+            full_encoding[action_type.value - 12] = 1
+        elif extra_info != None:
+            #encode one-hot encoding of choices for exchange sets; 0-4 + 0-4
+            action_mode[1] = 1
+
+        else:
+            action_mode[0] = 1
+            #+1 to the value of action-type to offset -1 encoding for inaction
+            full_encoding[action_type.value + 1] = 1
+            #can treat as normal encoding of (action_type one-hot) + (target one-hot)
+
+        return action_mode.extend(full_encoding)
+    """"
     def _encode_coins(self, state):
         encoded_coins = [0 for _ in range(state.players)]
         for i in range(state.players):
@@ -106,13 +193,18 @@ class Agent():
         return encoded_history
 
     def _encode_private(self, private_state):
-        private_encoded = [0 for i in range(10)]
+        private_encoded = [0 for i in range(5)]
         if len(private_state.cards) >= 1:
-            private_encoded[private_state.cards[0].value - 11] = 1
+            private_encoded[private_state.cards[0].value - 11] += 0.5
         if len(private_state.cards) == 2:
-            private_encoded[private_state.cards[1].value - 6] = 1
+            private_encoded[private_state.cards[1].value - 11] += 0.5
 
         return private_encoded
+
+    def _encode_state_class(self, state):
+        encoded_state_class = [0, 0, 0, 0, 0, 0]
+        encoded_state_class[state.state_class.value] = 1
+        return encoded_state_class
 
         
 
@@ -231,7 +323,3 @@ class HumanAgent(Agent):
         print(str(self.private_state))
         print("--------------------------------------------")
 
-
-#TODO: for imperfect info agent, state simplification mostly in history->set of times a player has asserted a card, but need temporal element of exchange encoded somehow 
-#TODO: for challenge simplification, straightforward-- this plalyer has challenged this other player on having x card n times
-#TODO: perhaps including recent move history in state encoding-- temporal element of "recent history" part of state cycling out an exchange action might be enough information for black box?
