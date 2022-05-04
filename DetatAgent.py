@@ -54,8 +54,8 @@ class BeliefState:
         else:
             self.prob_distribution = state_distribution
         #will be directly edited for subgame traversal purposes
-        self.prev = None 
-        self.next = None
+        self.prev = []
+        self.next = []
 
     def is_terminal(self):
         return self.public_state.is_terminal()
@@ -64,6 +64,7 @@ class BeliefState:
         #return list of new private/public state pairs resulting from action
         #NOTE for all states where this player loses card, change state class to appropriate LOSE_CARD state
         #NOTE for all eval starting action points, either direct state change or setting to EXCHANGE is done
+        #NOTE for all iterating over players for next state, check for aliveness
         #if statequality is action:
             #if action is coup:
             #   all possible card flips
@@ -74,32 +75,36 @@ class BeliefState:
             #if action is foreign aid, tax, steal, assassinate, exchange:
             #   change state quality, defer action completion
             #
-            #set starting_action 
+            #set starting_action, action_player 
 
         #if statequality is challengeaction:
             #if action is inaction:
-            #   change statequality to counter
+            #   iterate player
+            #   change statequality to counter if player = action_player
 
             #if action is challenge:
             #    generate successful/unsuccessful result states (with all possible flips)
             #    for each result, if initiator and target are alive, change statequality to counter
             #       else if initiator is alive but target is dead from successful challenge:
             #           do not proceed to counter, restart to action
+            #           iterate player from action_player
             #
             #       else if initiator is dead from unsuccessful challenge:
-            #           do not proceed to counter, restart to action and iterate curr player
-
+            #           do not proceed to counter, restart to action 
+            #           iterate player from action_player
 
         #if statequality is counter:
             #if action is inaction: 
-            #   complete action, statequality=action 
+            #   complete action, statequality=action, iterate from action_player
             #
             #if action is a counter:
             #   statequality = challengecounter
+            #   iterate curr_player
 
         #if statequality is challengecounter:
             #if action is inaction:
-            #   statequality = action
+            #   iterate curr_player
+            #   if curr_player = initiator of counter, statequality = action, iterate player from action_player
             #if action is a challenge:
             #   generate successful/unsuccessful result states w statequality=action
             #   for each result:
@@ -108,16 +113,20 @@ class BeliefState:
             #       elif initiaor is alive but target is dead:
             #           #challenge succeeded
             #           eval starting action
+            #           iterate player from action_player
             #       elif initiator is dead but target is alive:
             #           don't eval starting action
+            #           iterate player from action_player
+            #       elif loser is the player:
+            #           update state quality to appropriate extended lose_card
 
         #if statequality is any lose_card:
-            #update state quality
+            #update state quality based on which move_card
             #remove card from private state into public state
         
         #if statequality is exchange:
             #exchange with deck
-            #update state quality
+            #update state quality to action
         pass
 
     def eval_action_discrete(self, action_type, action_obj, private_states):
@@ -127,7 +136,7 @@ class BeliefState:
     def _eval_starting_action(self):
         pass
 
-#Policy that updates according to CFR
+#Policy that updates according to CFR and returns a strategy at a given PBS
 class Policy:
     def __init__(self):
         self._regret = {}
@@ -148,7 +157,7 @@ class Policy:
         #        strat[a] = 1.0 / num_actions
         pass
 
-    def update(self, distinct_states_to_add):
+    def update(self, state_samples):
         #TODO
         pass 
 
@@ -167,7 +176,9 @@ class MetaPolicyAgent(Agent):
         Agent.__init__(index)
 
     def make_move(self, valid_moves, public_state):
-        
+        pbs = BeliefState(self.index, public_state.num_players, public_state, self.private_state)
+        strat = self.policy.get_strategy(pbs)
+        #TODO: figure out how to actually pull dict[action]->weight into usable form
         #generate PBS
         #feed to policy to get a strategy
         #select from strategy
@@ -203,7 +214,24 @@ class CoupSubgame:
         else:
             #take public state, calculate all possible public and private states up to 
             #next, generate initial probabilities without considering policy
-            #TODO:
+            self.root.next.append(self.init_subgame(pbs, SUBGAME_DEPTH))
+            
+
+    def init_subgame(self, pbs, depth):
+        #if depth = 0, return self
+        if depth == 0:
+            return pbs
+        #generate all possible resulting public/private pairs from this pbs
+        #for each distinct state, add init_subgame(pbs, depth-1) to list of pbs.next
+        new_depth = depth 
+        result_states = pbs.eval_action_abstract()
+        for public, private in result_states:
+            new_pbs = BeliefState(pbs.index, pbs.num_players, public, private)
+            #only increment depth for the completion of a whole "turn"
+            if new_pbs.public_state.state_class == StateQualkity.ACTION:
+                new_depth = depth-1
+            result_layer = init_subgame(new_pbps, new_depth)
+            pbs.next.append(result_layer)
 
     def generate_leaf_values(self, policy1, policy2):
         #for each pbs in the leaf list, update the distribution based on policies
@@ -230,14 +258,14 @@ class DetatNetwork:
 
     def save(self, filename):
         if self._model == None:
-            print("no model loaded or built")
+            print("Not saving model: no model loaded or built")
             return 
         self._model.save(filename) 
 
     def load(self,filename):
         self._model = keras.models.load_model(filename)
 
-    def self_play(self, PBS):
+    def self_play(self, PBS, training=True):
     #   while(PBS.not_terminal)
     #  -policy, iter_policy = init_policy(PBS) #set both
     #   TODO: construct subgame class and generate via __init__(PBS), containing leaf fields and leaf_value fields
@@ -282,21 +310,18 @@ class DetatNetwork:
 
         return curr_policy
 
-
-    def construct_subtree(self, pbs):
-        #TODO: generate 
-        pass
-
-    def update(self, policy, sample):
-        #TODO:
-        #runs CFR given sample discrete states to compute payoff/regret
-        pass 
-
     def network_pbs_estimation(self, subgame):
         #TODO
         pass
 
+
+    ####################################################
+    ########functions used to actually build the network
+    def init_network(self):
+        pass
+
     def train(self, training_episodes):     
+        #trains using the self_play algorithm to generate training data
         #TODO           
         pass
 
