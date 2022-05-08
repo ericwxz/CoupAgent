@@ -9,6 +9,7 @@ from keras.optimizers import SGD
 
 ####subgame depth in terms of complete turns (set of ACTION-CHALLENGE-COUNTER-CHALLENGE phases)
 SUBGAME_DEPTH = 2
+CFR_DEPTH = 8
 DISTINCT_SAMPLES = 5
 
 starting_deck = [InfluenceType.duke, InfluenceType.duke, InfluenceType.duke,
@@ -20,8 +21,9 @@ possible_hands = list(itertools.combinations(starting_deck,2))
 set_of_hands = [i for i in set(possible_hands)]
 exchange_possibilities = list(set(possible_hands) - set([(InfluenceType.duke, InfluenceType.duke), (InfluenceType.assassin, InfluenceType.assassin), (InfluenceType.captain, InfluenceType.captain), (InfluenceType.ambassador, InfluenceType.ambassador), (InfluenceType.contessa, InfluenceType.contessa)]))
 
+
 class BeliefState:
-    def __init__(self, player_index, num_players, public_state, private_state, prob_distribution = None):
+    def __init__(self, game, player_index, num_players, public_state, private_state, prob_distribution = None):
         self.index = player_index
         self.num_players = num_players
         #full public state obj; if passed as input to a model, it will be encoded
@@ -53,29 +55,99 @@ class BeliefState:
 
         else:
             self.prob_distribution = state_distribution
+        self.non_agent_deck = starting_deck.copy()
+        for i in self.private_state.cards:
+            self.non_agent_deck.remove(i)
+        for flip_set in self.public_state.cards:
+            for i in flip_set:
+                if i != -1:
+                    self.non_agent_deck.remove(i)
         #will be directly edited for subgame traversal purposes
-        self.prev = []
-        self.next = []
+        #self.prev = []
+        self.next = {}
+        
+        #reorder state info as set of "player" and "opponent" public state components to use as keys in strategy dict
+        player_formatted = self.private_state.cards.copy()
+        if len(player_formatted) < 2:
+            player_formatted.append(-1)
+        player_formatted.append(self.public_state.coins[self.index])
+        self.player_state = player_formatted
+        opponents_formatted = []
+        for i in range(self.num_players):
+            if i != self.index:
+                opponents_formatted.extend([j for j in self.public_state.cards[i]])
+                opponents_formatted.append(self.public_state.coins[i])
+        
+        encoded_challenges = [0 for i in range(self.num_players * self.num_players * 5)]
+        for key in self.public_state.challenge_counts.keys():
+            num_challenges = min(4, self.public_state.challenge_counts[key])
+            #uses enum values for influence cards
+            start_index = key[0]*(self.num_players * 5) + key[1]*(5) + ((key[2].value - 11))
+            encoded_challenges[start_index] = num_challenges/4.0
+        opponents_formatted.extend(encoded_challenges)
+
+        #possible TODO: encode more recent history, rather than just the last one
+        def last_move(player):
+            for move in self.public_state.recent_history[player]:
+                if move != -1:
+                    return move 
+            return -1
+        recent_history = [last_move(i) for i in range(self.num_players)]
+        opponents_formatted.extend(recent_history)
+
+        self.opponent_state = opponents_formatted
+
+    def encode(self):
+        #this can update
+        prob_state = []
+        for player in prob_state:
+            prob_state.extend(player)
+        
+        return tuple(self.player_state + self.opponent_state + prob_state)
 
     def is_terminal(self):
         return self.public_state.is_terminal()
+
+    def _next_player(self, public_state):
+        def alive(state, target):
+            if state.cards[target][0] == -1 or state.cards[target][1] == -1:
+                return True 
+            return False
+        next_player_ind = (public_state.curr_player + 1) % public_state.players
+        while not alive(public_state, next_player_ind):
+            next_player_ind = (public_state.curr_player + 1) % public_state.players
+        
+        return next_player_ind
 
     def eval_action_abstract(self, action_type, action_obj):
         #return list of new private/public state pairs resulting from action
         #NOTE for all states where this player loses card, change state class to appropriate LOSE_CARD state
         #NOTE for all eval starting action points, either direct state change or setting to EXCHANGE is done
         #NOTE for all iterating over players for next state, check for aliveness
-        #if statequality is action:
-            #if action is coup:
-            #   all possible card flips
-            #
-            #if action is income:
-            #   change public state 
-            #
-            #if action is foreign aid, tax, steal, assassinate, exchange:
-            #   change state quality, defer action completion
-            #
-            #set starting_action, action_player 
+        #TODO: also implement history editing/probability checking
+        new_publics = []
+        new_privates = []
+        new_public_base = self.public_state.copy()
+        new_private_base = self.private_state.copy()
+
+        if self.public_state.state_class == StateQuality.ACTION:
+            if action_type == MoveType.coup:
+                #generate all possible result public states w/ statequality = action, curr_player incremented
+                #TODO: if target is self, go to LOSE_CARD, otherwise generate possibilities using self.non_agent_deck
+            elif action_type == MoveType.income:
+                #generate new state, iterate curr_player
+                new_public_state.coins[new_public_state.curr_player] += 1
+                new_public_base.state_class = StateQuality.ACTION
+                new_public_base.action_player = new_public_state.curr_player 
+                new_public_base.curr_player = self._next_player(new_public_base)
+                new_publics.append(new_public_base)
+                new_privates.append(new_private_base)
+            else: 
+                new_public_base.state_class = StateQuality.CHALLENGEACTION
+                new_public_base.action_player = new_public_state.curr_player
+                new_public_base.curr_player = self._next_player(new_public_base)
+                new_publics.append(new_public_base)
+                new_privates.append(new_private_base)
 
         #if statequality is challengeaction:
             #if action is inaction:
@@ -93,6 +165,12 @@ class BeliefState:
             #           do not proceed to counter, restart to action 
             #           iterate player from action_player
 
+        elif self.public_state.state_class == StateQuality.CHALLENGEACTION:
+            if action_type == ChallengeMoveType.inaction:
+
+            else:
+
+
         #if statequality is counter:
             #if action is inaction: 
             #   complete action, statequality=action, iterate from action_player
@@ -100,6 +178,12 @@ class BeliefState:
             #if action is a counter:
             #   statequality = challengecounter
             #   iterate curr_player
+
+        elif self.public_state.state_class == StateQuality.COUNTER:
+            if action_type == CounterMoveType.inaction:
+
+            else:
+                
 
         #if statequality is challengecounter:
             #if action is inaction:
@@ -119,17 +203,25 @@ class BeliefState:
             #           iterate player from action_player
             #       elif loser is the player:
             #           update state quality to appropriate extended lose_card
+        elif self.public_state.state_class == StateQuality.CHALLENGECOUNTER:
+            if action_type == ChallengeMoveType.inaction:
+
+            else:
 
         #if statequality is any lose_card:
             #update state quality based on which move_card
             #remove card from private state into public state
-        
+        elif isinstance(self.public_state.state_class, ExtendedStateQuality):
+
         #if statequality is exchange:
             #exchange with deck
             #update state quality to action
-        pass
+        elif self.public_state.state_class == StateQuality.EXCHANGE:
 
-    def eval_action_discrete(self, action_type, action_obj, private_states):
+        
+        return new_publics, new_privates
+
+    def eval_action_discrete(self, index, action_type, action_obj, private_states):
         #copy abstract implementation but replace challenge/assasinate/coup/exchange with discrete results
         pass
 
@@ -138,31 +230,83 @@ class BeliefState:
 
 #Policy that updates according to CFR and returns a strategy at a given PBS
 class Policy:
-    def __init__(self):
+    #TODO: manage index switching for player/opponent in copy()
+    def __init__(self, game, index, original_index = None):
+        #two dicts have keys: encoded pbs, values: inner dict of keys:action to value
         self._regret = {}
         self._prob_sum = {}
+        self.game = game
+        #index can change in training; custom pbs reordering done in update and get_strategy
+        self.index = index
+        self.original_index = original_index
+
+    def _pbs_adjustment(self, pbs, new_index = None):
+        if self.original_index == None or new_index == None or new_index == self.original_index:
+            return pbs 
+        else:
+            #to index into existing data fields by new index, swap old and original index info
+            #  to maintain equality of game
+            pbs.public_state.coins[original_index] = old_coins 
+            pbs.public_state.cards[original_index] = old_cards 
+            pbs.public_state.coins[original_index] = pbs.public_state.coins[new_index]
+            pbs.public_state.cards[original_index] = pbs.public_state.cards[new_index]
+            pbs.public_state.coins[new_index] = old_coins 
+            pbs.public_state.cards[new_index] = old_cards
+
+            
+
     
-    def get_strategy(self, pbs):
-        #actions = valid_actions
-        #if pbs not in self._regret:
-        #   initialize _regret[pbs] and _prob_sum[pbs]
-        #sum_regret = 0
-        #for a in actions:
-        #   sum_regret += max(0.0, self.regret[pbs][a])
-        #strat = {}
-        #for a in actions:
-        #    if sum_regret > 0.0:
-        #        strat[a] = max(0.0, self._regret[pbs][a]) / sum_regret
-        #    else:
-        #        strat[a] = 1.0 / num_actions
-        pass
+    def get_strategy(self, unadj_pbs, new_index=None):
+        pbs = self._pbs_adjustment(unadj_pbs, new_index)
+        actions = self.game.add_targets(self.game.valid_actions(self.index, pbs.public_state), self.index, pbs.public_state.action_player, pbs.public_state)
+        state_key = pbs.encode()
+        if state_key not in self._regret:
+            self._regret[state_key] = {a: 0.0 for a in actions}
+            self._prob_sum[state_key] = {a: 0.0 for a in actions}
+        sum_regret = 0
+        for a in actions:
+            sum_regret += max(0.0, self.regret[pbs][a])
 
+        strat = {}
+        for a in actions:
+            if sum_regret > 0.0:
+                strat[a] = max(0.0, self._regret[pbs][a])
+            else:
+                strat[a] = 1.0/num_actions
+        
+        return strat
+
+    def _cfr(self, hist, weights, depth):
+        self_realization_weight = 
+        opp_realization_weight = 
+        #first check if last state in history is a terminal state for the player
+        pub = hist[-1][0]
+        priv = hist[-1][1]
+        terminal_status = pub.is_terminal()
+        if terminal_status == self.index:
+            return 100
+        elif terminal_status != -1:
+            return -100 
+
+        #check if we've reached the depth of the playthrough for CFR; if so, use heuristic
+        if depth == 0:
+            return self.game.h( #TODO)
+
+    #state_samples should be distinct public/private state pairs
     def update(self, state_samples):
-        #TODO
-        pass 
+        
+        
+        
+        
+        #generate value for each available action
 
-    def copy(self):
-        new_policy = Policy()
+
+        #update regret/prob_sum[pbs][a] for all a and all pbs
+        for a in action_values:
+
+
+    def copy(self, new_index):
+        new_policy = Policy(self.game, new_index, self.index)
         new_policy._regret = self._regret.copy()
         new_policy._prob_sum = self._prob_sum.copy()
         return new_policy
@@ -203,44 +347,93 @@ class DetatAgent(Agent):
         self.network = detat_network
 
     def make_move(self, valid_moves, public_state):
+        #generate PBS
+        #policy = self-play(pbs)
+        #strat = get_strategy(PBS)
+        #return based on strategy
         pass
 
 class CoupSubgame:
     #leaves 
-    def __init__(self, init_pbs, leaf_pbs_list = None):
+    def __init__(self, game, index, init_pbs, leaf_pbs_dict_base = None, leaf_pbs_dict = None):
+        self.game = game
+        self.index = index
         self.root = init_pbs
-        if leaf_pbs_list != None:
-            self.leaf_pbs_list = leaf_pbs_list 
+        #base leaf heuristic values
+        if leaf_pbs_dict_base !=None: 
+            self.leaf_pbs_dict_base = leaf_pbs_dict_base
+        else:
+            self.leaf_pbs_dict_base = {}
+
+        #leaf values adjusted by probabilistic weights
+        if leaf_pbs_dict != None:
+            self.leaf_pbs_dict = leaf_pbs_dict
         else:
             #take public state, calculate all possible public and private states up to 
             #next, generate initial probabilities without considering policy
-            self.root.next.append(self.init_subgame(pbs, SUBGAME_DEPTH))
-            
+            self.init_subgame(self.root, SUBGAME_DEPTH)
+            self.leaf_pbs_dict = self.leaf_pbs_dict_base.copy()
 
-    def init_subgame(self, pbs, depth):
+    def init_subgame(self, pbs, depth, h):
+        #recursive call to generate all pbs nodes in subgame and set leaf values as heuristic
+        
         #if depth = 0, return self
         if depth == 0:
+            #NOTE: possible efficiency improvement can be done
+            if pbs.encode() not in self.leaf_pbs_dict_base:
+                self.leaf_pbs_dict_base[pbs.encode()] = 0
+            self.leaf_pbs_dict_base[pbs.encode()] += h(pbs.encode())
             return pbs
+
         #generate all possible resulting public/private pairs from this pbs
         #for each distinct state, add init_subgame(pbs, depth-1) to list of pbs.next
         new_depth = depth 
-        result_states = pbs.eval_action_abstract()
-        for public, private in result_states:
-            new_pbs = BeliefState(pbs.index, pbs.num_players, public, private)
-            #only increment depth for the completion of a whole "turn"
-            if new_pbs.public_state.state_class == StateQualkity.ACTION:
-                new_depth = depth-1
-            result_layer = init_subgame(new_pbps, new_depth)
-            pbs.next.append(result_layer)
 
-    def generate_leaf_values(self, policy1, policy2):
-        #for each pbs in the leaf list, update the distribution based on policies
-        #TODO: figure out how this is done
-        pass
+        #iterate over all possible actions
+        all_actions = self.game.add_targets(self.game.valid_actions(self.index, pbs.public_state), self.index, pbs.public_state.action_player, pbs.public_state)
+        result_states = []
+        result_states.extend([pbs.eval_action_abstract(a) for a in all_actions])
+        for i in range(len(all_actions)):
+            public = result_states[i][0]
+            private = result_states[i][1]
+            terminal_status = public.is_terminal()
+            if terminal_status != -1:
+                #generate pbs, encode, check/add to list
+                terminal_pbs = BeliefState(pbs.index, pbs.num_players, public, private)
+                terminal_pbs_encoded = terminal_pbs.encode()
+                if terminal_pbs_encoded not in self.leaf_pbs_dict_base:
+                    self.leaf_pbs_dict_base[terminal_pbs_encoded] = 0
+                self.leaf_pbs_dict_base[terminal_pbs_encoded] = 100 if terminal_status == self.index else -100
+                pbs.next[all_actions[i]] = terminal_pbs
+            else:
+                new_pbs = BeliefState(pbs.index, pbs.num_players, public, private)
+                #only increment depth for the completion of a whole "turn"
+                if new_pbs.public_state.state_class == StateQuality.ACTION:
+                    new_depth = depth-1
+                result_layer = init_subgame(new_pbs, new_depth)
+                pbs.next[all_actions[i]] = result_layer
 
-    #TODO: are we updating values or pbs leafs?
+    #policy 1 is "self-policy", policy2 is the policy for all opponents
+    #note: policy2 should have indexing updated before passing to update_leaves
     def update_leaves(self, policy1, policy2):
-        pass
+        self._update_by_weight(self.root, 1.0, policy, policy2)
+        
+
+    def _update_by_weight(self, pbs, weight, policy1, policy2)
+        pbs_encoded = pbs.encode()
+        if pbs_encoded in self.leaf_pbs_dict:
+            self.leaf_pbs_dict[pbs_encoded] = self.leaf_pbs_dict_base[pbs_encoded] * weight
+
+        if pbs.public_state.curr_player == self.index:
+            strat = policy1.get_strategy(pbs)
+        else:
+            strat = policy2.get_strategy(pbs, pbs.public_state.curr_player)
+
+        for action in strat:
+            new_weight = weight * strat[action]
+            new_pbs = pbs.next[action]
+            self._update_by_weight(new_pbs, new_weight, policy1, policy2)
+
 
     def sample_playthrough(self, policy1, policy2):
         #return a list of distinct (public, private) pairs from playthrough as well as last PBS leaf
