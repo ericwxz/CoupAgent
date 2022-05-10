@@ -313,7 +313,8 @@ class MultiPlayerCoup():
         curr_player = 0
         action_player = 0
         movestack = []
-        challenge_counts = {}
+        # challenge_counts[initiator][target][associated card]
+        challenge_counts = {i:{j:{k:0 for k in range(5)} for j in range(num_players)} for i in range(num_players)}
         recent_history = {}
         for i in range(num_players):
             recent_history[i] = [-1, -1, -1, -1, -1]
@@ -615,11 +616,7 @@ class MultiPlayerCoup():
                         print("Challenge initiated by Player " + str(challenge_initiated) + "against Player " + str(curr.curr_player))
 
                     #update record of challenges in state
-                    challenge_dict_key = (challenge_initiated, curr.curr_player, restricted_moves[starting_action_type])
-                    if challenge_dict_key not in curr.challenge_counts:
-                        curr.challenge_counts[challenge_dict_key] = 1
-                    else:
-                        curr.challenge_counts[challenge_dict_key] += 1
+                    curr.challenge_counts[challenge_initiated][curr.curr_player][restricted_moves[starting_action_type]] += 1
 
                     result = self.eval_challenge(curr, challenge_initiated, curr.curr_player)
                     curr = result[0]
@@ -682,6 +679,8 @@ class MultiPlayerCoup():
                             break
                 if challenge_initiated > -1: 
                     print("Challenge initiated by player " + str(challenge_initiated))
+                    #update record of challenges in state
+                    curr.challenge_counts[challenge_initiated][curr.curr_player][restricted_countermoves[starting_action_type]] += 1
                     result = self.eval_challenge(curr, challenge_initiated, counter_initiated)
                     curr = result[0]
                     challenge_success = result[1]
