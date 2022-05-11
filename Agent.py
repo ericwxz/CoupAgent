@@ -148,7 +148,7 @@ class Agent():
             #can treat as normal encoding of (action_type one-hot) + (target one-hot)
 
         return action_mode.extend(full_encoding)
-    """"
+    """
     def _encode_coins(self, state):
         encoded_coins = [0 for _ in range(state.players)]
         for i in range(state.players):
@@ -218,6 +218,64 @@ class Agent():
 class RandomAgent(Agent):
     def make_move(self, valid_moves, state):
         return random.choice(valid_moves)
+
+class BaselineAgent(Agent):
+    def make_move(self, valid_moves, state):
+        if len(valid_moves) == 1: 
+            return valid_moves[0]
+        #split moves into challenge-winnables and unwinnables
+        epsilon = 0.2
+        safe = 0.2
+        if state.state_class == StateQuality.ACTION: 
+            unchallengeables = []
+            winnables = []
+            unwinnables = []
+            for move in valid_moves:
+                if move[0] in unchallengeable_moves:
+                    unchallengeables.append(move)
+                elif restricted_moves[move[0]] in self.private_state.cards:
+                    winnables.append(move)
+                else:
+                    unwinnables.append(move)
+            pool = random.random()
+            if pool < epsilon and len(unwinnables) > 0:
+                return random.choice(unwinnables)
+            elif pool > (1.0-safe) and len(unchallengeables) > 0:
+                return random.choice(unchallengeables)
+            elif len(winnables) > 0:
+                return random.choice(winnables)
+            else:
+                return random.choice(valid_moves)
+            
+        elif state.state_class == StateQuality.CHALLENGEACTION:
+            pool = random.random()
+            print("DEBUG: valid moves in challengeaction: ")
+            print(valid_moves)
+            if pool > epsilon:
+                return valid_moves[1]
+            else:
+                return valid_moves[0]
+        elif state.state_class == StateQuality.COUNTER:
+            if len(valid_moves) == 1: 
+                return valid_moves[0]
+            winnables = []
+            unwinnables = []
+            for move in valid_moves:
+                if move[0] == -1:
+                    winnables.append(move)
+                elif restricted_moves[move[0]] in self.private_state.cards:
+                    winnables.append(move)
+                else:
+                    unwinnables.append(move)
+                
+        elif state.state_class == StateQuality.CHALLENGECOUNTER:
+            pool = random.random()
+            if pool > epsilon:
+                return valid_moves[1]
+            else:
+                return valid_moves[0]
+        else:
+            return random.choice(valid_moves)
 
 class HumanAgent(Agent):
     def __init__(self, index):

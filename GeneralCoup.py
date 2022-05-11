@@ -314,7 +314,9 @@ class MultiPlayerCoup():
         action_player = 0
         movestack = []
         # challenge_counts[initiator][target][associated card]
-        challenge_counts = {i:{j:{k:0 for k in range(5)} for j in range(num_players)} for i in range(num_players)}
+        card_types = [i for i in InfluenceType]
+        card_types.remove(InfluenceType.inaction)
+        challenge_counts = {i:{j:{k:0 for k in card_types} for j in range(num_players)} for i in range(num_players)}
         recent_history = {}
         for i in range(num_players):
             recent_history[i] = [-1, -1, -1, -1, -1]
@@ -493,7 +495,7 @@ class MultiPlayerCoup():
         elif starting_action[0] == MoveType.exchange:
             if self.check_target_aliveness(state, target):
                 #make explicit that the make_move call happens for an exchange, which passes possible moves uniquely
-                self.state_class = StateQuality.EXCHANGE
+                state.state_class = StateQuality.EXCHANGE
                 deck_top = self.show_deck_top() 
                 possible_exchanges = [[-1]]
                 #generate possible exchanges in the form [held card to switch, new card from deck]
@@ -508,6 +510,7 @@ class MultiPlayerCoup():
                     discarded_card = self.agent_list[state.curr_player].private_state.cards[hand_index]
                     self.agent_list[state.curr_player].private_state.cards[hand_index] = chosen_exchange[1]
                     self.deck[deck_index] = discarded_card 
+                state.state_class = StateQuality.ACTION
 
     def eval_counter(self, state, counteraction_type):
         if counteraction_type == CounterMoveType.assassinate:
@@ -603,7 +606,7 @@ class MultiPlayerCoup():
                 challenge_initiated = -1
                 for i in range(self.players):
                     if i != curr.curr_player:
-                        valid_moves = self.add_targets(self.valid_moves(i, curr), i, curr.curr_player)
+                        valid_moves = self.add_targets(self.valid_moves(i, curr), i, curr.curr_player, curr)
                         chosen_move = agents[i].make_move(valid_moves, curr)
                         if chosen_move[0] == ChallengeMoveType.challenge:
                             curr.movestack.append([ChallengeMoveType.challenge, move_objs[chosen_move[0]](i, chosen_move[1])])

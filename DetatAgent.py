@@ -1,31 +1,64 @@
 from Agent import Agent
 from GeneralCoup import *
 import itertools 
+import enum
 
-import keras
-from keras.models import Sequential 
-from keras.layers import Dense, Dropout
-from keras.optimizers import SGD
+#TODO: all instances of starting_action_type need to be generalized for games greater than 2 players (multiple challenge inactions on movestack)
 
 ####subgame depth in terms of complete turns (set of ACTION-CHALLENGE-COUNTER-CHALLENGE phases)
 SUBGAME_DEPTH = 2
 CFR_DEPTH = 8
 DISTINCT_SAMPLES = 5
-
 starting_deck = [InfluenceType.duke, InfluenceType.duke, InfluenceType.duke,
                 InfluenceType.assassin, InfluenceType.assassin, InfluenceType.assassin,
                 InfluenceType.captain, InfluenceType.captain, InfluenceType.captain, 
                 InfluenceType.ambassador, InfluenceType.ambassador, InfluenceType.ambassador, 
                 InfluenceType.contessa, InfluenceType.contessa, InfluenceType.contessa]
 possible_hands = list(itertools.combinations(starting_deck,2))
-single_card_hands = [(card) for card in InfluenceType]
+single_card_hands = [card for card in InfluenceType]
 single_card_hands.remove(InfluenceType.inaction)
+single_card_hands = [tuple([card]) for card in single_card_hands]
 possible_hands.extend(single_card_hands)
 set_of_hands = [i for i in set(possible_hands)]
 exchange_possibilities = list(set(possible_hands) - set([(InfluenceType.duke, InfluenceType.duke), (InfluenceType.assassin, InfluenceType.assassin), (InfluenceType.captain, InfluenceType.captain), (InfluenceType.ambassador, InfluenceType.ambassador), (InfluenceType.contessa, InfluenceType.contessa)]))
 
 def pub_priv_heuristic(pub, priv):
-    pass
+    #don't need to consider terminal states
+
+    #return some value based on the number of coins you have/ cards you have 
+    #  include some negative value based on relative wealth of opponents
+    curr_value = 0
+    #eval own cards and ascribe some value to them
+    own_cards_num = pub.cards[pub.curr_player].count(-1)
+    if own_cards_num == 0:
+        return -100
+    elif own_cards_num == 2:
+        curr_value += 50
+    #eval own coins and ascribe some value to them
+    own_coins = pub.coins[pub.curr_player]
+    curr_value += own_coins*3 #arbitrary
+
+    #bonuses for reaching coin benchmarks enabling further action
+    if own_coins >= 3:
+        curr_value += 5
+    if own_coins >= 7:
+        curr_value += 5
+
+    #eval number of opponent cards and coins in play
+    total_opp_cards = 0
+    total_opp_coins = 0
+    for i in range(pub.players):
+        if i != pub.curr_player:
+            total_opp_cards += pub.cards[i].count(-1)
+            total_opp_coins += pub.coins[i]
+    average_cards_per_opp = total_opp_cards/(pub.players - 1)
+    curr_value += (own_cards_num - average_cards_per_opp) * 50 
+
+    #eval collective wealth of opponents
+    average_coins_per_opp = total_opp_coins/ (pub.players - 1)
+    curr_value += (own_coins - average_cards_per_opp) * 10
+    return curr_value
+
 
 class BeliefState:
     def __init__(self, game, player_index, num_players, public_state, private_state, prob_distribution = None, special_state=None):
@@ -49,18 +82,23 @@ class BeliefState:
             for i in range(num_players):
                 if i == self.index:
                     curr_hand = tuple(self.private_state.cards)
-                    prob_distribution[i][curr_hand] = 1.0
+                    self.prob_distribution[i][curr_hand] = 1.0
                 else:
                     for j in set_of_hands:
-                        first_card = j[0]
-                        prob_first = starting_deck_copy.count(first_card) / in_play
-                        starting_deck_copy.remove(first_card)
-                        second_card = j[1] 
-                        prob_second = starting_deck_copy.count(second_card) / (in_play - 1)
-                        starting_deck_copy.append(first_card)
-                        prob_hand = prob_first*prob_second 
-                        prob_distribution[i][j] = prob_hand 
-
+                        if len(j) == 2:
+                            first_card = j[0]
+                            prob_first = starting_deck_copy.count(first_card) / in_play
+                            starting_deck_copy.remove(first_card)
+                            second_card = j[1] 
+                            prob_second = starting_deck_copy.count(second_card) / (in_play - 1)
+                            starting_deck_copy.append(first_card)
+                            prob_hand = prob_first*prob_second 
+                            self.prob_distribution[i][j] = prob_hand 
+                        else: 
+                            first_card = j[0]
+                            prob_first = starting_deck_copy.count(first_card) / in_play
+                            prob_hand = prob_first
+                            self.prob_distribution[i][j] = prob_hand 
         else:
             self.prob_distribution = state_distribution
         self.non_agent_deck = starting_deck.copy()
@@ -112,7 +150,7 @@ class BeliefState:
         #this can update
         prob_state = []
         for player in self.prob_distribution:
-            prob_state.extend(player)
+            prob_state.extend(self.prob_distribution[player])
         
         return tuple(self.player_state + self.opponent_state + prob_state)
 
@@ -168,19 +206,19 @@ class BeliefState:
 
             elif action_type == MoveType.income:
                 #generate new state, iterate curr_player
-                new_public_state.coins[new_public_state.curr_player] += 1
+                new_public_base.coins[new_public_base.curr_player] += 1
                 new_public_base.state_class = StateQuality.ACTION
-                new_public_base.action_player = new_public_state.curr_player 
+                new_public_base.action_player = new_public_base.curr_player 
                 new_public_base.curr_player = self._next_player(new_public_base)
                 new_public_base.movestack.append([action_type, action_obj])
                 
                 new_states.append([new_public_base, new_private_base])
             else: 
                 new_public_base.state_class = StateQuality.CHALLENGEACTION
-                new_public_base.action_player = new_public_state.curr_player
+                new_public_base.action_player = new_public_base.curr_player
                 new_public_base.curr_player = self._next_player(new_public_base)
-                new_public_base.recent_history.pop(0)
-                new_public_base.recent_history.append(action_type)
+                new_public_base.recent_history[self.public_state.curr_player].pop(0)
+                new_public_base.recent_history[self.public_state.curr_player].append(action_type)
                 new_public_base.movestack.append([action_type, action_obj])
 
                 new_states.append([new_public_base, new_private_base])
@@ -230,8 +268,9 @@ class BeliefState:
                             public.curr_player = self._next_player(public, public.action_player)
 
                         #add to challenge history
-                        starting_action_type = new_public_base.movestack[-1][0]
+                        starting_action_type = public.movestack[-1][0]
                         public.movestack.append([action_type, action_obj])
+                        print(starting_action_type)
                         public.challenge_counts[action_obj.player][action_obj.target][restricted_moves[starting_action_type]] += 1
                     new_states.extend(res_states)
 
@@ -360,7 +399,7 @@ class BeliefState:
                     new_public_base.cards[action_obj.player][0] = card_to_lose 
                 else:
                     new_public_base.cards[action_obj.player][1] = card_to_lose 
-                new_states.append(new_public_base, new_private_base)
+                new_states.append([new_public_base, new_private_base])
 
             elif self.public_state.state_class == ExtendedStateQuality.LOSE_CARD_CHALLENGE_ACTION:
                 new_private_base.cards.remove(card_to_lose)
@@ -371,7 +410,7 @@ class BeliefState:
                 starting_target = new_public_base.movestack[-2][1].target 
                 new_public_base.curr_player = starting_target 
                 new_public_base.state_class = StateQuality.COUNTER 
-                new_states.append(new_public_base, new_private_base)
+                new_states.append([new_public_base, new_private_base])
 
             elif self.public_state.state_class == ExtendedStateQuality.LOSE_CARD_CHALLENGE_COUNTER:
                 new_private_base.cards.remove(card_to_lose)
@@ -387,7 +426,7 @@ class BeliefState:
                 else:
                     new_public_base.curr_player = self._next_player(new_public_base, new_public_base.action_player)
                     new_public_base.state_class = StateQuality.ACTION
-                    new_states.append(new_public_base, new_private_base)
+                    new_states.append([new_public_base, new_private_base])
                     
             else:
                 #just LOSE_CARD:
@@ -400,7 +439,7 @@ class BeliefState:
                     new_public_base.cards[action_obj.player][1] = card_to_lose 
                 new_public_base.curr_player = self._next_player(new_public_base, new_public_base.action_player)
                 new_public_base.state_class = StateQuality.ACTION
-                new_states.append(new_public_base, new_private_base)
+                new_states.append([new_public_base, new_private_base])
 
         #if statequality is exchange:
             #exchange with deck
@@ -411,7 +450,7 @@ class BeliefState:
             self.non_agent_deck.remove(action_obj.from_deck)
             self.non_agent_deck.append(action_obj.to_deck)
             new_public_base.state_class = StateQuality.ACTION
-            new_states.append(new_public_base, new_private_base)
+            new_states.append([new_public_base, new_private_base])
 
         return new_states
 
@@ -428,18 +467,19 @@ class BeliefState:
             curr_ind -= 1
         starting_action_type = public.movestack[curr_ind][0]
         starting_obj = public.movestack[curr_ind][1]
-        
         new_public_base = public.copy()
         new_private_base = private.copy()
         eval_states = []
 
         if starting_action_type == MoveType.assassinate:
             if starting_obj.target == self.index:
+                new_public_base.coins[starting_obj.player] -= 7
                 new_public_base.state_class = ExtendedStateQuality.LOSE_CARD 
                 new_public_base.curr_player = self.index 
-                return [[new_public_base],[new_private_base]]
+                return [[new_public_base,new_private_base]]
             else:
                 #generate all flip outcomes
+                new_public_base.coins[starting_obj.player] -= 7
                 results = self._opp_flip_states(new_public_base, new_private_base, starting_obj.target, StateQuality.ACTION, starting_obj.player)
                 for res in results:
                     pub = res[0]
@@ -461,7 +501,7 @@ class BeliefState:
                 new_public_base = StateQuality.EXCHANGE 
                 new_public_base.curr_player = self.index
 
-        return [[new_public_base],[new_private_base]]
+        return [[new_public_base,new_private_base]]
         
 
     def _opp_flip_states(self, new_public_base, new_private_base, index, next_quality, next_player):
@@ -525,7 +565,7 @@ class Policy:
     
     def get_strategy(self, unadj_pbs, new_index=None, new_hand=None):
         pbs = self._pbs_adjustment(unadj_pbs, new_index, new_hand)
-        actions = self.game.add_targets(self.game.valid_actions(self.index, pbs.public_state), self.index, pbs.public_state.action_player, pbs.public_state)
+        actions = self.game.add_targets(self.game.valid_moves(self.index, pbs.public_state), self.index, pbs.public_state.action_player, pbs.public_state)
         state_key = pbs.encode()
         if state_key not in self._regret:
             self._regret[state_key] = {a: 0.0 for a in actions}
@@ -547,9 +587,10 @@ class Policy:
         #ignoring beliefs and which private hand, what is the average strategy?
         #TODO
         pass
+        
 
     def _cfr(self, pbs, weights, h=None):
-        if h=None:
+        if h==None:
             h=pub_priv_heuristic
         #first check if last state in history is a terminal state for the player
         pub = pbs.public_state 
@@ -564,7 +605,7 @@ class Policy:
         if len(pbs.next) == 0:
             return h(pub,priv)
         else:
-            all_actions = self.game.add_targets(self.game.valid_actions(pub.curr_player, pub), pub.curr_player, pub.action_player, pub)
+            all_actions = self.game.add_targets(self.game.valid_moves(pub.curr_player, pub), pub.curr_player, pub.action_player, pub)
             v = 0.0
             values = {tuple(a): 0.0 for a in all_actions}
             if pub.curr_player == self.index:
@@ -572,13 +613,14 @@ class Policy:
             else:                
                 strat = self.get_average_opp_strategy(pub)
             for a in all_actions:
-                new_weights = weights.copy() 
-                new_weights[pub.curr_player] = strat[a] * weights[pub.curr_player]
-                values[a] = -1.0 * self._cfr(pbs.next[a], new_weights, h)
-                v += strat[a] * values[a]
-                self._regret[pbs.encode()][a] += new_weights[(pub.curr_player+1)%pub.players] * (values[a] - v)
-                self._prob_sum[pbs.encode()][a] += new_weights[pub.curr_player] * strat[a]
-            return v
+                for res_act_state in pbs.next[a]:
+                    new_weights = weights.copy() 
+                    new_weights[pub.curr_player] = strat[a] * weights[pub.curr_player]
+                    values[a] = -1.0 * self._cfr(res_act_state, new_weights, h)
+                    v += strat[a] * values[a]
+                    self._regret[pbs.encode()][a] += new_weights[(pub.curr_player+1)%pub.players] * (values[a] - v)
+                    self._prob_sum[pbs.encode()][a] += new_weights[pub.curr_player] * strat[a]
+            return v/len(pbs.next[a])
 
             
 
@@ -596,9 +638,7 @@ class Policy:
 
 
 class CoupSubgame:
-    #leaves 
     def __init__(self, game, index, init_pbs, leaf_state_pbs = None, leaf_pbs_weight_base = None, leaf_pbs_weight = None):
-        #TODO: reorg where to call init_subgame to generate leaf list
         self.game = game
         self.index = index
         self.root = init_pbs
@@ -619,7 +659,7 @@ class CoupSubgame:
         else:
             #take public state, calculate all possible public and private states up to 
             #next, generate initial probabilities without considering policy
-            self.init_subgame(self.root, SUBGAME_DEPTH)
+            self.init_subgame(self.root, SUBGAME_DEPTH, pub_priv_heuristic)
             self.leaf_pbs_weight = self.leaf_pbs_weight_base.copy()
 
     def init_subgame(self, pbs, depth, h):
@@ -631,7 +671,7 @@ class CoupSubgame:
             #NOTE: possible efficiency improvement can be done
             if pbs.encode() not in self.leaf_pbs_weight_base:
                 self.leaf_pbs_weight_base[pbs.encode()] = 0
-            self.leaf_pbs_weight_base[pbs.encode()] += h(pbs.encode())
+            self.leaf_pbs_weight_base[pbs.encode()] += h(pbs.public_state, pbs.private_state)
             self.leaf_state_pbs[pbs.encode_without_beliefs()] = pbs
             return pbs
 
@@ -640,29 +680,35 @@ class CoupSubgame:
         new_depth = depth 
 
         #iterate over all possible actions
-        all_actions = self.game.add_targets(self.game.valid_actions(pbs.public_state.curr_player, pbs.public_state), pbs.public_state.curr_player, pbs.public_state.action_player, pbs.public_state)
+        all_actions = self.game.add_targets(self.game.valid_moves(pbs.public_state.curr_player, pbs.public_state), pbs.public_state.curr_player, pbs.public_state.action_player, pbs.public_state)
+        all_actions_elaborated = [[a[0], move_objs[a[0]](pbs.public_state.curr_player, a[1])] for a in all_actions ]
         result_states = []
-        result_states.extend([pbs.eval_action_abstract(a) for a in all_actions])
+        for a in all_actions_elaborated:
+            result_states.append(pbs.eval_action_abstract(a[0], a[1]))
+        
         for i in range(len(all_actions)):
-            public = result_states[i][0]
-            private = result_states[i][1]
-            terminal_status = public.is_terminal()
-            if terminal_status != -1:
-                #generate pbs, encode, check/add to list
-                terminal_pbs = BeliefState(pbs.index, pbs.num_players, public, private)
-                terminal_pbs_encoded = terminal_pbs.encode()
-                if terminal_pbs_encoded not in self.leaf_pbs_weight_base:
-                    self.leaf_pbs_weight_base[terminal_pbs_encoded] = 0
-                self.leaf_pbs_weight_base[terminal_pbs_encoded] = 100 if terminal_status == self.index else -100
-                self.leaf_state_pbs[terminal_pbs.encode_without_beliefs()] = terminal_pbs
-                pbs.next[all_actions[i]] = terminal_pbs
-            else:
-                new_pbs = BeliefState(pbs.index, pbs.num_players, public, private)
-                #only increment depth for the completion of a whole "turn"
-                if new_pbs.public_state.state_class == StateQuality.ACTION and new_pbs.curr_player == self.index:
-                    new_depth = depth-1
-                result_layer = init_subgame(new_pbs, new_depth)
-                pbs.next[all_actions[i]] = result_layer
+            branch_states = result_states[i]
+            pbs.next[tuple(all_actions[i])] = []
+            for sub in branch_states:
+                public = sub[0]
+                private = sub[1]
+                terminal_status = public.is_terminal()
+                if terminal_status != -1:
+                    #generate pbs, encode, check/add to list
+                    terminal_pbs = BeliefState(self.game, pbs.index, pbs.num_players, public, private)
+                    terminal_pbs_encoded = terminal_pbs.encode()
+                    #if terminal_pbs_encoded not in self.leaf_pbs_weight_base:
+                    #    self.leaf_pbs_weight_base[terminal_pbs_encoded] = 0
+                    #self.leaf_pbs_weight_base[terminal_pbs_encoded] = 100 if terminal_status == self.index else -100
+                    self.leaf_state_pbs[terminal_pbs.encode_without_beliefs()] = terminal_pbs
+                    pbs.next[tuple(all_actions[i])].append(terminal_pbs)
+                else:
+                    new_pbs = BeliefState(self.game, pbs.index, pbs.num_players, public, private)
+                    #only increment depth for the completion of a whole "turn"
+                    if new_pbs.public_state.state_class == StateQuality.ACTION and new_pbs.public_state.curr_player == self.index:
+                        new_depth = depth-1
+                    self.init_subgame(new_pbs, new_depth, h)
+                    pbs.next[tuple(all_actions[i])].append(new_pbs)
 
     #PROBABLY NOT EVER USED; assume it does not work probably
     #policy 1 is "self-policy", policy2 is the policy for all opponents
@@ -671,10 +717,10 @@ class CoupSubgame:
         self._update_by_weight(self.root, 1.0, policies, opp_policies)
         
     #opp_policies should be a dict of index->policy object
-    def _update_by_weight(self, pbs, weight, policies)
+    def _update_by_weight(self, pbs, weight, policies):
         pbs_encoded = pbs.encode()
         if pbs_encoded in self.leaf_pbs_weight:
-            self.leaf_pbs_weight[pbs_encoded] = self.[pbs_encoded] * weight 
+            self.leaf_pbs_weight[pbs_encoded] = self.leaf_pbs_weight_base[pbs_encoded] * weight 
         strat = policies[pbs.public_state.curr_player].get_strategy(pbs, pbs.public_state.curr_player)
 
         for action in strat:
@@ -688,7 +734,7 @@ class CoupSubgame:
     def _update_subgame_pbs_distributions(self, pbs, policies):
         #don't update subsequent PBSs if leaf
         if len(pbs.next) != 0:
-            all_actions = self.game.add_targets(self.game.valid_actions(pbs.public_state.curr_player, pbs.public_state), pbs.public_state.curr_player, pbs.public_state.action_player, pbs.public_state)
+            all_actions = self.game.add_targets(self.game.valid_moves(pbs.public_state.curr_player, pbs.public_state), pbs.public_state.curr_player, pbs.public_state.action_player, pbs.public_state)
             
             beliefs_about_target = pbs.prob_distribution[pbs.public_state.curr_player]
             
@@ -717,17 +763,19 @@ class CoupSubgame:
                 if pbs.prob_distribution[pbs.public_state.curr_player][hand] != 0.0:
                     strat = strats_by_hand[hand]
                     for action in all_actions:
-                        prob_action_given_hand = strat[action]
-                        prob_hand = pbs.prob_distribution[pbs.public_state.curr_player][hand]
-                        prob_action = action_overall_probability[action]
+                        for res_act_state in pbs.next[action]:
+                            prob_action_given_hand = strat[action]
+                            prob_hand = pbs.prob_distribution[pbs.public_state.curr_player][hand]
+                            prob_action = action_overall_probability[action]
 
-                        prob_hand_given_action = prob_action_given_hand * prob_hand / prob_action
-                        pbs.next[action].prob_distribution[pbs.public_state.curr_player][hand] = prob_hand_given_action
+                            prob_hand_given_action = prob_action_given_hand * prob_hand / prob_action
+                            res_act_state.prob_distribution[pbs.public_state.curr_player][hand] = prob_hand_given_action
     
 
         if len(pbs.next) != 0:
             for action in pbs.next:
-                self._update_subgame_pbs_distributions(pbs.next[action], policies)
+                for res_act_state in pbs.next[action]:
+                    self._update_subgame_pbs_distributions(res_act_state, policies)
         
     #only need for full self-play/network/Rebel agent
     def sample_playthrough(self, policy1, policy2):
