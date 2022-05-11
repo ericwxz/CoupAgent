@@ -26,11 +26,14 @@ exchange_possibilities = list(set(possible_hands) - set([(InfluenceType.duke, In
 
 
 class BeliefState:
-    def __init__(self, game, player_index, num_players, public_state, private_state, prob_distribution = None):
+    def __init__(self, game, player_index, num_players, public_state, private_state, prob_distribution = None, special_state=None):
         self.index = player_index
         self.num_players = num_players
         #full public state obj; if passed as input to a model, it will be encoded
         self.public_state = public_state
+        #extended state notion for custom evaluation
+        if special_state != None:
+            self.public_state.state_class = special_state
         #own private state
         self.private_state = private_state
         #probabilities player i has hand type j (index in set_of_hands) given by self.s_d[i][j]
@@ -106,22 +109,29 @@ class BeliefState:
     def encode(self):
         #this can update
         prob_state = []
-        for player in prob_state:
+        for player in self.prob_distribution:
             prob_state.extend(player)
         
         return tuple(self.player_state + self.opponent_state + prob_state)
 
+    def encode_without_beliefs(self):
+        return tuple(self.player_state + self.opponent_state)
+
     def is_terminal(self):
         return self.public_state.is_terminal()
 
-    def _next_player(self, public_state):
+    def _next_player(self, public_state, starting_ind = None):
         def alive(state, target):
             if state.cards[target][0] == -1 or state.cards[target][1] == -1:
                 return True 
             return False
-        next_player_ind = (public_state.curr_player + 1) % public_state.players
+        
+        if starting_ind == None:
+            starting_ind = public_state.curr_player
+
+        next_player_ind = (starting_ind + 1) % public_state.players
         while not alive(public_state, next_player_ind):
-            next_player_ind = (public_state.curr_player + 1) % public_state.players
+            next_player_ind = (next_player_ind + 1) % public_state.players
         
         return next_player_ind
 
@@ -131,108 +141,344 @@ class BeliefState:
         #NOTE for all eval starting action points, either direct state change or setting to EXCHANGE is done
         #NOTE for all iterating over players for next state, check for aliveness
         #TODO: also implement history editing/probability checking
-        new_publics = []
-        new_privates = []
+        new_states = []
         new_public_base = self.public_state.copy()
         new_private_base = self.private_state.copy()
 
+        #TODO: add actions to movestack for future eval
         if self.public_state.state_class == StateQuality.ACTION:
             if action_type == MoveType.coup:
-                #generate all possible result public states w/ statequality = action, curr_player incremented
-                #TODO: if target is self, go to LOSE_CARD, otherwise generate possibilities using self.non_agent_deck
+                if action_obj.target != self.index:
+                    #generate all possible result public states w/ statequality = action, curr_player incremented
+                    res_states = self._opp_flip_states(new_public_base, new_private_base, action_obj.target, StateQuality.ACTION ,self._next_player(new_public_base))
+                    for res in res_states:
+                        pub = res[0]
+                        priv = res[1]
+                        pub.movestack.append([action_type, action_obj])
+                    new_states.extend(res_states)
+                else:
+                    #if target is self, go to LOSE_CARD
+                    new_public_base.state_class = ExtendedStateQuality.LOSE_CARD_ACTION
+                    new_public_base.action_player = new_public_base.curr_player
+                    new_public_base.movestack.append([action_type, action_obj])
+                    new_states.append([new_public_base, new_private_base])
+                    
+
             elif action_type == MoveType.income:
                 #generate new state, iterate curr_player
                 new_public_state.coins[new_public_state.curr_player] += 1
                 new_public_base.state_class = StateQuality.ACTION
                 new_public_base.action_player = new_public_state.curr_player 
                 new_public_base.curr_player = self._next_player(new_public_base)
-                new_publics.append(new_public_base)
-                new_privates.append(new_private_base)
+                new_public_base.movestack.append([action_type, action_obj])
+                
+                new_states.append([new_public_base, new_private_base])
             else: 
                 new_public_base.state_class = StateQuality.CHALLENGEACTION
                 new_public_base.action_player = new_public_state.curr_player
                 new_public_base.curr_player = self._next_player(new_public_base)
-                new_publics.append(new_public_base)
-                new_privates.append(new_private_base)
+                new_public_base.recent_history.pop(0)
+                new_public_base.recent_history.append(action_type)
+                new_public_base.movestack.append([action_type, action_obj])
 
-        #if statequality is challengeaction:
-            #if action is inaction:
-            #   iterate player
-            #   change statequality to counter if player = action_player
-
-            #if action is challenge:
-            #    generate successful/unsuccessful result states (with all possible flips)
-            #    for each result, if initiator and target are alive, change statequality to counter
-            #       else if initiator is alive but target is dead from successful challenge:
-            #           do not proceed to counter, restart to action
-            #           iterate player from action_player
-            #
-            #       else if initiator is dead from unsuccessful challenge:
-            #           do not proceed to counter, restart to action 
-            #           iterate player from action_player
+                new_states.append([new_public_base, new_private_base])
 
         elif self.public_state.state_class == StateQuality.CHALLENGEACTION:
             if action_type == ChallengeMoveType.inaction:
+                new_public_base.curr_player = self._next_player(new_public_base)
+                if new_public_base.curr_player == new_public_base.action_player:
+                    if new_public_base.movestack[-1][0] in counter_index:
+                        new_public_base.curr_player = new_public_base.movestack[-1][1].target 
+                        new_public_base.state_class = StateQuality.COUNTER
+                    else:
+                        new_public_base.curr_player = self._next_player(new_public_base)
+                        new_public_base.state_class = StateQuality.ACTION
+                ################Challenge history updating
+                starting_action_type = new_public_base.movestack[-1][0]
+                new_public_base.movestack.append([action_type, action_obj])
+                new_public_base.challenge_counts[action_obj.player][action_obj.target][restricted_moves[starting_action_type]] += 1
+                ################
+                new_states.append([new_public_base, new_private_base])
 
             else:
+                target_self = True if action_obj.target == self.index else False 
+                initiator_self = True if action_obj.player == self.index else False
 
+                #generate target_win states, initiator loses card, action goes through
+                if initiator_self:
+                    new_public = new_public_base.copy()
+                    new_public.state_class=ExtendedStateQuality.LOSE_CARD_CHALLENGE_ACTION
+                    new_public.curr_player = action_obj.player 
+                    #########
+                    starting_action_type = new_public_base.movestack[-1][0]
+                    new_public.movestack.append([action_type, action_obj])
+                    new_public.challenge_counts[action_obj.player][action_obj.target][restricted_moves[starting_action_type]] += 1
+                    ##########
+                    new_private = new_private_base.copy()
+                    new_states.append([new_public, new_private])
+                else:
+                    res_states = self._opp_flip_states(new_public_base, new_private_base, action_obj.player, StateQuality.COUNTER, new_public_base.movestack[-1][1].target)
+                    for res in res_states:
+                        public = res[0]
+                        private = res[1]
+                        #check to see if COUNTER is suppsoed to be the next state, if not, go back to ACTION
+                        if public.movestack[-1][0] not in counter_index or (-1 not in public.cards[action_obj.player] and action_obj.player == new_public_base.movestack[-1][1].target):
+                            #change quality to action, next player 
+                            public.state_class = StateQuality.ACTION 
+                            public.curr_player = self._next_player(public, public.action_player)
 
-        #if statequality is counter:
-            #if action is inaction: 
-            #   complete action, statequality=action, iterate from action_player
-            #
-            #if action is a counter:
-            #   statequality = challengecounter
-            #   iterate curr_player
+                        #add to challenge history
+                        starting_action_type = new_public_base.movestack[-1][0]
+                        public.movestack.append([action_type, action_obj])
+                        public.challenge_counts[action_obj.player][action_obj.target][restricted_moves[starting_action_type]] += 1
+                    new_states.extend(res_states)
+
+                #generate initiator_win states
+                if target_self:
+                    new_public = new_public_base.copy()
+                    new_public.state_class=ExtendedStateQuality.LOSE_CARD_CHALLENGE_ACTION
+                    new_public.curr_player = action_obj.player 
+                    #########
+                    starting_action_type = new_public_base.movestack[-1][0]
+                    new_public.movestack.append([action_type, action_obj])
+                    new_public.challenge_counts[action_obj.player][action_obj.target][restricted_moves[starting_action_type]] += 1
+                    ##########
+                    new_private = new_private_base.copy()
+                    new_states.append([new_public, new_private])
+                else:
+                    res_states = self._opp_flip_states(new_public_base, new_private_base, action_obj.player, StateQuality.COUNTER, new_public_base.movestack[-1][1].target)
+                    for res in res_states:
+                        public = res[0]
+                        private = res[1]
+                        #check to see if COUNTER is the next state, if not, go back to ACTION
+                        if public.movestack[-1][0] not in counter_index or (-1 not in public.cards[action_obj.target]):
+                            #change quality to action, next player 
+                            public.state_class = StateQuality.ACTION 
+                            public.curr_player = self._next_player(public, public.action_player)
+                        #add to challenge history
+                        starting_action_type = new_public_base.movestack[-1][0]
+                        public.movestack.append([action_type, action_obj])
+                        public.challenge_counts[action_obj.player][action_obj.target][restricted_moves[starting_action_type]] += 1
+                    new_states.extend(res_states)
+
 
         elif self.public_state.state_class == StateQuality.COUNTER:
             if action_type == CounterMoveType.inaction:
-
+                results = self._eval_starting_action(new_public_base, new_private_base) #TODO
+                for res in results:
+                    res[0].movestack.append([action_type, action_obj])
+                new_states.append([res_pub, res_priv])
             else:
+                new_public_base.state_class = StateQuality.CHALLENGECOUNTER
+                ############
+                new_public_base.recent_history[new_public_base.curr_player].pop(0)
+                new_public_base.recent_history[new_public_base.curr_player].append(restricted_countermoves[action_type])
+                new_public_base.curr_player = self._next_player(new_public_base)
+                new_public_base.movestack.append([action_type, action_obj])
+                ###########
+                new_states.append([new_public_base, new_private_base])
                 
-
-        #if statequality is challengecounter:
-            #if action is inaction:
-            #   iterate curr_player
-            #   if curr_player = initiator of counter, statequality = action, iterate player from action_player
-            #if action is a challenge:
-            #   generate successful/unsuccessful result states w statequality=action
-            #   for each result:
-            #       if initiator and target are alive:
-            #           evaluate starting action if successful
-            #       elif initiaor is alive but target is dead:
-            #           #challenge succeeded
-            #           eval starting action
-            #           iterate player from action_player
-            #       elif initiator is dead but target is alive:
-            #           don't eval starting action
-            #           iterate player from action_player
-            #       elif loser is the player:
-            #           update state quality to appropriate extended lose_card
         elif self.public_state.state_class == StateQuality.CHALLENGECOUNTER:
             if action_type == ChallengeMoveType.inaction:
-
+                new_public_base.curr_player = self._next(new_public_base)
+                if new_public_base.curr_player == self.public_state.movestack[-1][1].player: 
+                    new_public_base.state_class = StateQuality.ACTION
+                    new_public_base.curr_player = self._next(new_public_base, new_public_base.action_player)
             else:
+                target_self = True if action_obj.target == self.index else False 
+                initiator_self = True if action_obj.player == self.index else False
+
+                #generate target_win states, initiator loses card, action doesn't go through
+                if initiator_self:
+                    new_public = new_public_base.copy()
+                    new_public.state_class=ExtendedStateQuality.LOSE_CARD_CHALLENGE_COUNTER
+                    new_public.curr_player = action_obj.player 
+                    #########
+                    starting_action_type = new_public_base.movestack[-1][0]
+                    new_public.movestack.append([action_type, action_obj])
+                    new_public.challenge_counts[action_obj.player][action_obj.target][restricted_moves[starting_action_type]] += 1
+                    ##########
+                    new_private = new_private_base.copy()
+                    new_states.append([new_public, new_private])
+                else:
+                    res_states = self._opp_flip_states(new_public_base, new_private_base, action_obj.player, StateQuality.ACTION, new_public_base.movestack[-1][1].target)
+                    for res in res_states:
+                        public = res[0]
+                        private = res[1]
+                        public.state_class = StateQuality.ACTION 
+                        public.curr_player = self._next_player(public, public.action_player)
+
+                        #add to challenge history
+                        starting_action_type = new_public_base.movestack[-1][0]
+                        public.movestack.append([action_type, action_obj])
+                        public.challenge_counts[action_obj.player][action_obj.target][restricted_moves[starting_action_type]] += 1
+                    new_states.extend(res_states)
+
+                #generate initiator_win states; action goes through
+                if target_self:
+                    new_public = new_public_base.copy()
+                    new_public.state_class=ExtendedStateQuality.LOSE_CARD_CHALLENGE_COUNTER
+                    new_public.curr_player = action_obj.player 
+                    #########
+                    starting_action_type = new_public_base.movestack[-1][0]
+                    new_public.movestack.append([action_type, action_obj])
+                    new_public.challenge_counts[action_obj.player][action_obj.target][restricted_moves[starting_action_type]] += 1
+                    ##########
+                    new_private = new_private_base.copy()
+                    new_states.append([new_public, new_private])
+                else:
+                    res_states = self._opp_flip_states(new_public_base, new_private_base, action_obj.player, StateQuality.COUNTER, new_public_base.movestack[-1][1].target)
+                    for res in res_states:
+                        public = res[0]
+                        private = res[1]
+                        results = self._eval_starting_action(public, private) #TODO
+                        for res in results:
+                            new_pub = res[0]
+                            new_priv = res[1]
+                            new_pub.movestack.append([action_type, action_obj])
+                            new_pub.state_class = StateQuality.ACTION 
+                            new_pub.curr_player = self._next_player(public, public.action_player)
+                            #add to challenge history
+                            starting_action_type = new_public_base.movestack[-1][0]
+                            new_pub.movestack.append([action_type, action_obj])
+                            new_pub.challenge_counts[action_obj.player][action_obj.target][restricted_moves[starting_action_type]] += 1
+                        new_states.extend(results)
+
+
 
         #if statequality is any lose_card:
             #update state quality based on which move_card
             #remove card from private state into public state
         elif isinstance(self.public_state.state_class, ExtendedStateQuality):
+            card_to_lose = lose_influence_action_to_type[action_type]
+            if self.public_state.state_class == ExtendedStateQuality.LOSE_CARD_ACTION:
+                #could only be from coup; lose selected card
+                new_private_base.cards.remove(card_to_lose)
+                if new_public_base.cards[action_obj.player][0] == -1:
+                    new_public_base.cards[action_obj.player][0] = card_to_lose 
+                else:
+                    new_public_base.cards[action_obj.player][1] = card_to_lose 
+                new_states.append(new_public_base, new_private_base)
+
+            elif self.public_state.state_class == ExtendedStateQuality.LOSE_CARD_CHALLENGE_ACTION:
+                new_private_base.cards.remove(card_to_lose)
+                if new_public_base.cards[action_obj.player][0] == -1:
+                    new_public_base.cards[action_obj.player][0] = card_to_lose 
+                else:
+                    new_public_base.cards[action_obj.player][1] = card_to_lose 
+                starting_target = new_public_base.movestack[-2][1].target 
+                new_public_base.curr_player = starting_target 
+                new_public_base.state_class = StateQuality.COUNTER 
+                new_states.append(new_public_base, new_private_base)
+
+            elif self.public_state.state_class == ExtendedStateQuality.LOSE_CARD_CHALLENGE_COUNTER:
+                new_private_base.cards.remove(card_to_lose)
+                if new_public_base.cards[action_obj.player][0] == -1:
+                    new_public_base.cards[action_obj.player][0] = card_to_lose 
+                else:
+                    new_public_base.cards[action_obj.player][1] = card_to_lose 
+
+                counter_initiator = new_public_base.movestack[-2][1].player 
+                if self.index == counter_initiator:
+                    results = self._eval_starting_action(new_public_base, new_private_base) #TODO
+                    new_states.extend(results)
+                else:
+                    new_public_base.curr_player = self._next_player(new_public_base, new_public_base.action_player)
+                    new_public_base.state_class = StateQuality.ACTION
+                    new_states.append(new_public_base, new_private_base)
+                    
+            else:
+                #just LOSE_CARD:
+                    #from completion of delayed starting action
+                #iterate player from action_player
+                new_private_base.cards.remove(card_to_lose)
+                if new_public_base.cards[action_obj.player][0] == -1:
+                    new_public_base.cards[action_obj.player][0] = card_to_lose 
+                else:
+                    new_public_base.cards[action_obj.player][1] = card_to_lose 
+                new_public_base.curr_player = self._next_player(new_public_base, new_public_base.action_player)
+                new_public_base.state_class = StateQuality.ACTION
+                new_states.append(new_public_base, new_private_base)
 
         #if statequality is exchange:
             #exchange with deck
             #update state quality to action
         elif self.public_state.state_class == StateQuality.EXCHANGE:
+            new_private_base.remove(action_obj.to_deck)
+            new_private_base.append(action_obj.from_deck)
+            self.non_agent_deck.remove(action_obj.from_deck)
+            self.non_agent_deck.append(action_obj.to_deck)
+            new_public_base.state_class = StateQuality.ACTION
+            new_states.append(new_public_base, new_private_base)
 
-        
-        return new_publics, new_privates
+        return new_states
 
+    #only used in self-play and training
     def eval_action_discrete(self, index, action_type, action_obj, private_states):
         #copy abstract implementation but replace challenge/assasinate/coup/exchange with discrete results
         pass
 
-    def _eval_starting_action(self):
-        pass
+    #returns the next state (public, private pair) and iterates curr_player and state_quality. 
+    def _eval_starting_action(self, public, private):
+        #find starting action by iterating backwards on movestack
+        curr_ind = -1 
+        while not isinstance(public.movestack[curr_ind][0], MoveType):
+            curr_ind -= 1
+        starting_action_type = public.movestack[curr_ind][0]
+        starting_obj = public.movestack[curr_ind][1]
+        
+        new_public_base = public.copy()
+        new_private_base = private.copy()
+        eval_states = []
+
+        if starting_action_type == MoveType.assassinate:
+            if starting_obj.target == self.index:
+                new_public_base.state_class = ExtendedStateQuality.LOSE_CARD 
+                new_public_base.curr_player = self.index 
+                return [[new_public_base],[new_private_base]]
+            else:
+                #generate all flip outcomes
+                results = self._opp_flip_states(new_public_base, new_private_base, starting_obj.target, StateQuality.ACTION, starting_obj.player)
+                for res in results:
+                    pub = res[0]
+                    pub.curr_player = self._next_player(pub)
+                return results
+
+        new_public_base.curr_player = self._next_player(new_public_base, starting_obj.player)
+        new_public_base.state_class = StateQuality.ACTION
+        if starting_action_type == MoveType.foreign_aid:
+            new_public_base.coins[starting_obj.player] += 2
+        elif starting_action_type == MoveType.tax:
+            new_public_base.coins[starting_obj.player] += 3
+        elif starting_action_type == MoveType.steal:
+            coins_stolen = min(new_public_base.coins[starting_obj.target], 2)
+            new_public_base.coins[starting_obj.player] += coins_stolen 
+            new_public_base.coins[starting_obj.target] -= coins_stolen
+        elif starting_action_type == MoveType.exchange:
+            if starting_obj.player == self.index:
+                new_public_base = StateQuality.EXCHANGE 
+                new_public_base.curr_player = self.index
+
+        return [[new_public_base],[new_private_base]]
+        
+
+    def _opp_flip_states(self, new_public_base, new_private_base, index, next_quality, next_player):
+        new_states = []
+        card_types = [card for card in InfluenceType]
+        card_types.remove(InfluenceType.inaction)
+        for card in card_types:
+            if card in self.non_agent_deck:
+                possible_state = new_public_base.copy()
+                constant_private = new_private_base.copy()
+                #possible outcome; add new public state with that card flipped for the target
+                if possible_state.cards[index][0] == -1:
+                    possible_state.cards[index][0] = card 
+                elif possible_state.cards[index][1] == -1:
+                    possible_state.cards[index][1] = card 
+                possible_state.curr_player = next_player 
+                possible_state.state_class = next_quality
+                new_states.append([possible_state, constant_private])
+        return new_states
 
 #Policy that updates according to CFR and returns a strategy at a given PBS
 class Policy:
@@ -406,30 +652,6 @@ class MetaPolicyAgent(Agent):
         pass
 
 
-############################
-#make_move(valid_moves, state):
-#  -generate PBS based on state history
-#  -self-play based on that PBS, but without adding to training
-#       - once terminal, return policy after iterative search
-#  -based on policy (probabilities per action), return action
-
-
-####### takes a pre-trained network and uses it to make decisions
-class DetatAgent(Agent):
-    def __init__(self, index, num_players):
-        self.num_players = num_players
-        Agent.__init__(index)
-    
-    def set_network(self, detat_network):
-        self.network = detat_network
-
-    def make_move(self, valid_moves, public_state):
-        #generate PBS
-        #policy = self-play(pbs)
-        #strat = get_strategy(PBS)
-        #return based on strategy
-        pass
-
 class CoupSubgame:
     #leaves 
     def __init__(self, game, index, init_pbs, leaf_state_pbs = None, leaf_pbs_weight_base = None, leaf_pbs_weight = None):
@@ -467,6 +689,7 @@ class CoupSubgame:
             if pbs.encode() not in self.leaf_pbs_weight_base:
                 self.leaf_pbs_weight_base[pbs.encode()] = 0
             self.leaf_pbs_weight_base[pbs.encode()] += h(pbs.encode())
+            self.leaf_state_pbs[pbs.encode_without_beliefs()] = pbs
             return pbs
 
         #generate all possible resulting public/private pairs from this pbs
@@ -488,6 +711,7 @@ class CoupSubgame:
                 if terminal_pbs_encoded not in self.leaf_pbs_weight_base:
                     self.leaf_pbs_weight_base[terminal_pbs_encoded] = 0
                 self.leaf_pbs_weight_base[terminal_pbs_encoded] = 100 if terminal_status == self.index else -100
+                self.leaf_state_pbs[terminal_pbs.encode_without_beliefs()] = terminal_pbs
                 pbs.next[all_actions[i]] = terminal_pbs
             else:
                 new_pbs = BeliefState(pbs.index, pbs.num_players, public, private)
@@ -497,6 +721,7 @@ class CoupSubgame:
                 result_layer = init_subgame(new_pbs, new_depth)
                 pbs.next[all_actions[i]] = result_layer
 
+    #PROBABLY NOT EVER USED; assume it does not work probably
     #policy 1 is "self-policy", policy2 is the policy for all opponents
     #note: policy2 should have indexing updated before passing to update_leaves
     def update_weights(self, policies):
@@ -506,9 +731,7 @@ class CoupSubgame:
     def _update_by_weight(self, pbs, weight, policies)
         pbs_encoded = pbs.encode()
         if pbs_encoded in self.leaf_pbs_weight:
-            self.leaf_pbs_weight[pbs_encoded] = self.[pbs_encoded] * weight
-
-        
+            self.leaf_pbs_weight[pbs_encoded] = self.[pbs_encoded] * weight 
         strat = policies[pbs.public_state.curr_player].get_strategy(pbs, pbs.public_state.curr_player)
 
         for action in strat:
@@ -517,57 +740,80 @@ class CoupSubgame:
             self._update_by_weight(new_pbs, new_weight, policy1, policies)
 
     def update_all_pbs(self, policies):
-        self._update_subgame_pbs(self.root, policies)
+        self._update_subgame_pbs_distributions(self.root, policies)
 
-    def _update_subgame_pbs(self, pbs, policies):
-        if pbs.public_state.curr_player != pbs.index:
-            #don't update subsequent PBSs if leaf
-            if len(pbs.next) != 0:
-                all_actions = self.game.add_targets(self.game.valid_actions(pbs.public_state.curr_player, pbs.public_state), pbs.public_state.curr_player, pbs.public_state.action_player, pbs.public_state)
-                
-                beliefs_about_target = pbs.prob_distribution[pbs.public_state.curr_player]
-                
-                #check for impossible hands; set probability in pbs to 0 for those hands for this player
-                possible_cards = set(pbs.non_agent_deck)
-                card_counts_in_play = {i:pbs.non_agent_deck.count(i) for i in possible_cards}
+def _update_subgame_pbs_distributions(self, pbs, policies):
+        #don't update subsequent PBSs if leaf
+        if len(pbs.next) != 0:
+            all_actions = self.game.add_targets(self.game.valid_actions(pbs.public_state.curr_player, pbs.public_state), pbs.public_state.curr_player, pbs.public_state.action_player, pbs.public_state)
+            
+            beliefs_about_target = pbs.prob_distribution[pbs.public_state.curr_player]
+            
+            #check for impossible hands; set probability in pbs to 0 for those hands for this player
+            possible_cards = set(pbs.non_agent_deck)
+            card_counts_in_play = {i:pbs.non_agent_deck.count(i) for i in possible_cards}
+            for hand in set_of_hands:
+                for card in hand:
+                    if hand.count(card) > card_counts_in_play[i]:
+                        pbs.prob_distribution[pbs.public_state.curr_player][hand] = 0.0 
+            strats_by_hand = {}
+            action_overall_probability = {}
+            #initialize possible strategies by hand
+            for hand in set_of_hands:
+                strat = policies[pbs.public_state.curr_player].get_strategy(pbs, pbs.public_state.curr_player, hand)
+                strats_by_hand[hand] = strat
+            #initialize overall probabilities per action
+            for action in all_actions:
+                overall_probability = 0.0
                 for hand in set_of_hands:
-                    for card in hand:
-                        if hand.count(card) > card_counts_in_play[i]:
-                            pbs.prob_distribution[pbs.public_state.curr_player][hand] = 0.0 
-                strats_by_hand = {}
-                action_overall_probability = {}
-                #initialize possible strategies by hand
-                for hand in set_of_hands:
-                    strat = policies[pbs.public_state.curr_player].get_strategy(pbs, pbs.public_state.curr_player, hand)
-                    strats_by_hand[hand] = strat
-                #initialize overall probabilities per action
-                for action in all_actions:
-                    overall_probability = 0.0
-                    for hand in set_of_hands:
-                        overall_probability += strats_by_hand[hand][action] * pbs.prob_distribution[pbs.public_state.curr_player][hand]
-                    action_overall_probability[hand]
+                    overall_probability += strats_by_hand[hand][action] * pbs.prob_distribution[pbs.public_state.curr_player][hand]
+                action_overall_probability[hand]
 
-                #check the strat for the probability of playing action for each hand
-                for hand in set_of_hands:
-                    if pbs.prob_distribution[pbs.public_state.curr_player][hand] != 0.0:
-                        strat = strats_by_hand[hand]
-                        for action in all_actions:
-                            prob_action_given_hand = strat[action]
-                            prob_hand = pbs.prob_distribution[pbs.public_state.curr_player][hand]
-                            prob_action = action_overall_probability[action]
+            #check the strat for the probability of playing action for each hand
+            for hand in set_of_hands:
+                if pbs.prob_distribution[pbs.public_state.curr_player][hand] != 0.0:
+                    strat = strats_by_hand[hand]
+                    for action in all_actions:
+                        prob_action_given_hand = strat[action]
+                        prob_hand = pbs.prob_distribution[pbs.public_state.curr_player][hand]
+                        prob_action = action_overall_probability[action]
 
-                            prob_hand_given_action = prob_action_given_hand * prob_hand / prob_action
-                            pbs.next[action].prob_distribution[pbs.public_state.curr_player][hand] = prob_hand_given_action
+                        prob_hand_given_action = prob_action_given_hand * prob_hand / prob_action
+                        pbs.next[action].prob_distribution[pbs.public_state.curr_player][hand] = prob_hand_given_action
+    
 
         if len(pbs.next) != 0:
             for action in pbs.next:
-                self._update_subgame_pbs(pbs.next[action], policies)
+                self._update_subgame_pbs_distributions(pbs.next[action], policies)
         
+    #only need for full self-play/network/Rebel agent
     def sample_playthrough(self, policy1, policy2):
         #return a list of distinct (public, private) pairs from playthrough as well as last PBS leaf
         #   the cards from the opponent(s) are randomized based on available cards
         pass
             
+
+#########################################################################################################
+#########################################################################################################
+#Unimplemented framework for self-play/ReBel agent
+
+
+####### takes a pre-trained network and uses it to make decisions
+class DetatAgent(Agent):
+    def __init__(self, index, num_players):
+        self.num_players = num_players
+        Agent.__init__(index)
+    
+    def set_network(self, detat_network):
+        self.network = detat_network
+
+    def make_move(self, valid_moves, public_state):
+        #generate PBS
+        #policy = self-play(pbs)
+        #strat = get_strategy(PBS)
+        #return based on strategy
+        pass
+
 
 ####### Trains a network through self-play
 class DetatNetwork:

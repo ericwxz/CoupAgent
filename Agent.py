@@ -50,6 +50,12 @@ lose_influence_type = {InfluenceType.duke:LoseInfluenceMoveType.LOSE_DUKE,
                         InfluenceType.contessa:LoseInfluenceMoveType.LOSE_CONTESSA,
                         InfluenceType.ambassador:LoseInfluenceMoveType.LOSE_AMBASSADOR}
 
+lose_influence_action_to_type = {LoseInfluenceMoveType.LOSE_DUKE:InfluenceType.duke,
+                        LoseInfluenceMoveType.LOSE_CAPTAIN:InfluenceType.captain,
+                        LoseInfluenceMoveType.LOSE_ASSASSIN:InfluenceType.assassin,
+                        LoseInfluenceMoveType.LOSE_CONTESSA:InfluenceType.contessa,
+                        LoseInfluenceMoveType.LOSE_AMBASSADOR:InfluenceType.ambassador}
+
 lose_card_move_objs = {LoseInfluenceMoveType.LOSE_DUKE:LoseDukeMove,
                         LoseInfluenceMoveType.LOSE_CAPTAIN:LoseCaptainMove,
                         LoseInfluenceMoveType.LOSE_ASSASSIN:LoseAssassinMove,
