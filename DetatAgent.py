@@ -24,6 +24,8 @@ possible_hands.extend(single_card_hands)
 set_of_hands = [i for i in set(possible_hands)]
 exchange_possibilities = list(set(possible_hands) - set([(InfluenceType.duke, InfluenceType.duke), (InfluenceType.assassin, InfluenceType.assassin), (InfluenceType.captain, InfluenceType.captain), (InfluenceType.ambassador, InfluenceType.ambassador), (InfluenceType.contessa, InfluenceType.contessa)]))
 
+def pub_priv_heuristic(pub, priv):
+    pass
 
 class BeliefState:
     def __init__(self, game, player_index, num_players, public_state, private_state, prob_distribution = None, special_state=None):
@@ -520,8 +522,6 @@ class Policy:
             new_challenge_dict[new_index] = pbs.public_state.challenge_counts[original_index]
             pbs.public_state.challenge_counts = new_challenge_dict
 
-            
-
     
     def get_strategy(self, unadj_pbs, new_index=None, new_hand=None):
         pbs = self._pbs_adjustment(unadj_pbs, new_index, new_hand)
@@ -543,113 +543,56 @@ class Policy:
         
         return strat
 
-    def _cfr(self, hist, weights, depth, h):
-        self_realization_weight = 
-        opp_realization_weight = 
+    def get_average_opp_strategy(self, pub):
+        #ignoring beliefs and which private hand, what is the average strategy?
+        #TODO
+        pass
+
+    def _cfr(self, pbs, weights, h=None):
+        if h=None:
+            h=pub_priv_heuristic
         #first check if last state in history is a terminal state for the player
-        pub = hist[-1][0]
-        priv = hist[-1][1]
+        pub = pbs.public_state 
+        priv = pbs.private_state
         terminal_status = pub.is_terminal()
-        if terminal_status == self.index:
+        if terminal_status == pub.curr_player:
             return 100
         elif terminal_status != -1:
             return -100 
 
         #check if we've reached the depth of the playthrough for CFR; if so, use heuristic
-        if depth == 0:
-            return h( )#TODO
-
+        if len(pbs.next) == 0:
+            return h(pub,priv)
         else:
+            all_actions = self.game.add_targets(self.game.valid_actions(pub.curr_player, pub), pub.curr_player, pub.action_player, pub)
+            v = 0.0
+            values = {tuple(a): 0.0 for a in all_actions}
+            if pub.curr_player == self.index:
+                strat = self.get_strategy(pbs)
+            else:                
+                strat = self.get_average_opp_strategy(pub)
+            for a in all_actions:
+                new_weights = weights.copy() 
+                new_weights[pub.curr_player] = strat[a] * weights[pub.curr_player]
+                values[a] = -1.0 * self._cfr(pbs.next[a], new_weights, h)
+                v += strat[a] * values[a]
+                self._regret[pbs.encode()][a] += new_weights[(pub.curr_player+1)%pub.players] * (values[a] - v)
+                self._prob_sum[pbs.encode()][a] += new_weights[pub.curr_player] * strat[a]
+            return v
+
             
 
-    #value of leaf state: probability of reaching it 
-
-    def expected_value(self, pbs, policy, beliefs, nodes):
-        # for each player and infoset for that player, a list of
-        # (value, probability) pairs over all states in that infoset
-        infoset_ev = [{} for _ in range(pbs.num_players)]
+    #state_samples should be a subgame of PBSs, h=function for estimating leaf values
+    def update(self, subgame, h=None):
+        weights = [1.0] * subgame.root.public_state.players
+        self._cfr(subgame.root, weights, h)
         
-        #  accumulate the value of this node over all possible actions
-        value = 0.0
-        actions = self.game.add_targets(self.game.valid_actions(self.index, pbs.public_state), self.index, pbs.public_state.action_player, pbs.public_state)
-        for a in actions:
-            prob_action = 
-        #            p_deal = pbs[0][i] * pbs[1][j] / (1.0 - pbs[1][i])
-        #            deal_value = self._expected_value(deal, policy, beliefs, nodes)
-        #            value += p_deal * deal_value
-        #            for p in range(2):
-        #                if deal[p] not in infoset_ev[p]:
-        #                    infoset_ev[p][deal[p]] = []
-        #                infoset_ev[p][deal[p]].append((deal_value, p_deal))
-
-
-
-        # for each player and all infosets, determine the value of the
-        # infoset from the values of the states
-        #for p in range(2):
-        #    for info in infoset_ev[p]:
-        #        state_values = infoset_ev[p][info]
-        #        p_info = sum(prob for value, prob in state_values)
-        #        v_info = sum(value * prob / p_info for value, prob in state_values)
-        #        infoset_ev[p][info] = v_info
-        
-        #return value, infoset_ev
-            
-    #TODO: overhaul
-    def _expected_value(self, deal, policy, beliefs, nodes):
-        if self._game.is_terminal(self._bets):
-            #print("TERMINAL VALUE:", deal, self._bets, self._game.value(deal, self._bets))
-            return self._game.value(deal, self._bets)
-        elif len(self._children) == 0:
-            # would use neural network here
-            return 0.0
-        else:
-            node_index = nodes[self]
-            actor = len(self._bets) % 2
-            value = 0.0
-            for action_index, child in enumerate(self._children):
-                p_child = policy.distribution_by_card(self._bets)[deal[actor]][action_index]
-                v_child = child._expected_value(deal, policy, beliefs, nodes)
-                value += p_child * v_child
-            #print("VALUE:", deal, self._bets, value)
-            return value
-
-
-    #state_samples should be distinct public/private state pairs, h=function for estimating leaf values
-    def update(self, state_samples, h):
-        
-        
-        
-        
-        #generate value for each available action
-
-
-        #update regret/prob_sum[pbs][a] for all a and all pbs
-        for a in action_values:
-
 
     def copy(self, new_index):
         new_policy = Policy(self.game, new_index, self.index)
         new_policy._regret = self._regret.copy()
         new_policy._prob_sum = self._prob_sum.copy()
         return new_policy
-
-
-#takes a policy for sampling purposes
-class MetaPolicyAgent(Agent):
-    def __init__(self, index, num_players, policy):
-        self.policy = policy 
-        self.num_players = num_players 
-        Agent.__init__(index)
-
-    def make_move(self, valid_moves, public_state):
-        pbs = BeliefState(self.index, public_state.num_players, public_state, self.private_state)
-        strat = self.policy.get_strategy(pbs)
-        #TODO: figure out how to actually pull dict[action]->weight into usable form
-        #generate PBS
-        #feed to policy to get a strategy
-        #select from strategy
-        pass
 
 
 class CoupSubgame:
@@ -716,7 +659,7 @@ class CoupSubgame:
             else:
                 new_pbs = BeliefState(pbs.index, pbs.num_players, public, private)
                 #only increment depth for the completion of a whole "turn"
-                if new_pbs.public_state.state_class == StateQuality.ACTION:
+                if new_pbs.public_state.state_class == StateQuality.ACTION and new_pbs.curr_player == self.index:
                     new_depth = depth-1
                 result_layer = init_subgame(new_pbs, new_depth)
                 pbs.next[all_actions[i]] = result_layer
@@ -742,7 +685,7 @@ class CoupSubgame:
     def update_all_pbs(self, policies):
         self._update_subgame_pbs_distributions(self.root, policies)
 
-def _update_subgame_pbs_distributions(self, pbs, policies):
+    def _update_subgame_pbs_distributions(self, pbs, policies):
         #don't update subsequent PBSs if leaf
         if len(pbs.next) != 0:
             all_actions = self.game.add_targets(self.game.valid_actions(pbs.public_state.curr_player, pbs.public_state), pbs.public_state.curr_player, pbs.public_state.action_player, pbs.public_state)
@@ -894,3 +837,18 @@ class DetatNetwork:
 
 
 
+#takes a policy for sampling purposes in self-play
+class MetaPolicyAgent(Agent):
+    def __init__(self, index, num_players, policy):
+        self.policy = policy 
+        self.num_players = num_players 
+        Agent.__init__(index)
+
+    def make_move(self, valid_moves, public_state):
+        pbs = BeliefState(self.index, public_state.num_players, public_state, self.private_state)
+        strat = self.policy.get_strategy(pbs)
+        #TODO: figure out how to actually pull dict[action]->weight into usable form
+        #generate PBS
+        #feed to policy to get a strategy
+        #select from strategy
+        pass
