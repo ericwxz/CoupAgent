@@ -180,7 +180,6 @@ class BeliefState:
         #NOTE for all states where this player loses card, change state class to appropriate LOSE_CARD state
         #NOTE for all eval starting action points, either direct state change or setting to EXCHANGE is done
         #NOTE for all iterating over players for next state, check for aliveness
-        #TODO: also implement history editing/probability checking
         new_states = []
         new_public_base = self.public_state.copy()
         new_private_base = self.private_state.copy()
@@ -824,35 +823,13 @@ class DetatNetwork:
         self._model = keras.models.load_model(filename)
 
     def self_play(self, PBS, training=True):
-    #   while(PBS.not_terminal)
-    #  -policy, iter_policy = init_policy(PBS) #set both
-    #   TODO: construct subgame class and generate via __init__(PBS), containing leaf fields and leaf_value fields
-    #  -subgame = construct_subtree(PBS) 
-    #       ##generate all possible distinct states at SUBGAME_DEPTH
-    #  -subgame.leaf_pbs = generate_leaf_values(PBS, policy, iter_policy) 
-    #       ##generate PBSs for each leaf in the subgame, based on conditional probability
-    #  -pbs_value = network_value(leaf_PBS_list)
-    #       ##for each PBS leaf, take weighted average? update as value for root PBS
-    #  -sample_iter = rand(range(loop_length))
-    #  -for iter in loop_length:
-    #       -TODO: figure out how to represent sample playthrough for CFR to act on
-    #       -sample, pbs_leaf = sample_playthrough(PBS, policy, policy) 
-    #           ## generate distinct states resulting from a policy playthrough, and also resulting PBS at end of subgame
-    #       -if iter == sample_iter:
-    #           -next_PBS = pbs_leaf
-    #       -new_policy = CFR(policy, sample)
-    #       -#NOTE: maybe exclude this: iter_policy = iter/(iter+1) * old_policy_vals + 1/(iter+1) new_policy_vals
-    #       -subgame-leaf_values = genreate_leaf_values(PBS, iter_policy or policy, new_policy)
-    #       -new_est_val = iter/(iter+1)*pbs_value + 1/(iter+1)*network_value(new subgame leaves)
-    #  -if training: add (PBS, new_est_value) to training data
-    #  -PBS = next_PBS 
+        #TODO: rewrite to reflect updated implemented Policy, CoupSubgame, and BeliefState framework
         curr_pbs = PBS
         curr_policy = Policy()
         iter_policy = Policy()
         next_PBS = PBS
         while curr_PBS.is_terminal == -1:
             subgame = CoupSubgame(curr_PBS)
-            #TODO: generate values for leaves (PBSs or actual values? need function or nah?)
             pbs_value = network_pbs_estimation(subgame)
             sample_index = random.choice(range(DISTINCT_SAMPLES))
             for i in range(DISTINCT_SAMPLES):
@@ -881,22 +858,4 @@ class DetatNetwork:
     def train(self, training_episodes):     
         #trains using the self_play algorithm to generate training data
         #TODO           
-        pass
-
-
-
-#takes a policy for sampling purposes in self-play
-class MetaPolicyAgent(Agent):
-    def __init__(self, index, num_players, policy):
-        self.policy = policy 
-        self.num_players = num_players 
-        Agent.__init__(index)
-
-    def make_move(self, valid_moves, public_state):
-        pbs = BeliefState(self.index, public_state.num_players, public_state, self.private_state)
-        strat = self.policy.get_strategy(pbs)
-        #TODO: figure out how to actually pull dict[action]->weight into usable form
-        #generate PBS
-        #feed to policy to get a strategy
-        #select from strategy
         pass
