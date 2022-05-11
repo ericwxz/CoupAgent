@@ -119,36 +119,7 @@ class Agent():
         encoded_state.extend(self._encode_state_class(state))
 
         return encoded_state
-    """
-    def encode_action(self, action_type, target, num_players, extra_info=None):
-        #TODO:
-        #extra_info = action_object if needed for exchange
-        #encode all possible actions that could be passed by make_move
-        #assume all actions, including exchaning cards and choosing a card to lose
-
-        #for different modes, we designate a three bit one-hot at the start of the encoding
-        action_mode = [0, 0, 0]
-        len_mode_encoding = 3
-        #number of action_types in playbook: 13
-        #number of targets: num_players
-        #max encoding size: 13 + num_players
-        full_encoding = [0 for i in range()]#TODO)]
-        if isinstance(action_type, LoseInfluenceMoveType):
-            #encode one-hot encoding of choices for cards to lose; 0-4
-            action_mode[2] = 1
-            full_encoding[action_type.value - 12] = 1
-        elif extra_info != None:
-            #encode one-hot encoding of choices for exchange sets; 0-4 + 0-4
-            action_mode[1] = 1
-
-        else:
-            action_mode[0] = 1
-            #+1 to the value of action-type to offset -1 encoding for inaction
-            full_encoding[action_type.value + 1] = 1
-            #can treat as normal encoding of (action_type one-hot) + (target one-hot)
-
-        return action_mode.extend(full_encoding)
-    """
+    
     def _encode_coins(self, state):
         encoded_coins = [0 for _ in range(state.players)]
         for i in range(state.players):
@@ -267,6 +238,11 @@ class BaselineAgent(Agent):
                     winnables.append(move)
                 else:
                     unwinnables.append(move)
+            pool = random.random()
+            if len(unwinnables) > 0 and pool < epsilon:
+                return random.choice(unwinnables) 
+            else: 
+                return random.choice(winnables)
                 
         elif state.state_class == StateQuality.CHALLENGECOUNTER:
             pool = random.random()
