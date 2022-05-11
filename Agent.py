@@ -219,9 +219,9 @@ class BaselineAgent(Agent):
                 return random.choice(valid_moves)
             
         elif state.state_class == StateQuality.CHALLENGEACTION:
+            if len(valid_moves) < 2:
+                return random.choice(valid_moves)
             pool = random.random()
-            print("DEBUG: valid moves in challengeaction: ")
-            print(valid_moves)
             if pool > epsilon:
                 return valid_moves[1]
             else:
@@ -232,7 +232,7 @@ class BaselineAgent(Agent):
             winnables = []
             unwinnables = []
             for move in valid_moves:
-                if move[0] == -1:
+                if move[0] == -1 or move[0] == CounterMoveType.inaction:
                     winnables.append(move)
                 elif restricted_moves[move[0]] in self.private_state.cards:
                     winnables.append(move)
@@ -245,12 +245,15 @@ class BaselineAgent(Agent):
                 return random.choice(winnables)
                 
         elif state.state_class == StateQuality.CHALLENGECOUNTER:
+            if len(valid_moves) < 2:
+                return random.choice(valid_moves)
             pool = random.random()
             if pool > epsilon:
                 return valid_moves[1]
             else:
                 return valid_moves[0]
         else:
+            #print("DEBUG: valid moves by baseline agent losing card or exchanging: " + str(valid_moves))
             return random.choice(valid_moves)
 
 class HumanAgent(Agent):

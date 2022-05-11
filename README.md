@@ -1,8 +1,8 @@
 # CoupAgent
 CS 490 Senior Project; create a workable imperfect-information agent that performs better than basic policy players.
 
-Run PlayRandomAgent.py to play 2-player Coup against a Random agent.
-Run TestBaselineAgent.py to play agains a basic policy agent. 
+Run PlayRandomAgent.py to play 3-player Coup against a Random agent.
+Run TestBaselineAgent.py to play 3-player Coup against a basic policy agent. 
 
 DetatAgent.py contains the current work done in implementing a reinforcement learning + search agent, including CFR for search. 
 

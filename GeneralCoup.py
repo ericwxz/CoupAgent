@@ -416,8 +416,10 @@ class MultiPlayerCoup():
         #2) receives choice from agent and edits private and public states
         #returns [state, True or False] signifying whether the challenge was successful or not
     def eval_challenge(self, state, initiator, target):
+        print("DEBUG: player " + str(initiator) + " challenging player " + str(target))
         #index to the challenged action in question will always be the penultimate on the movestack
         initiator_cards = self.agent_list[initiator].private_state.cards
+        #print("DEBUG: initiator cards " + str(initiator_cards) )
         target_cards = self.agent_list[target].private_state.cards
 
         challenged_move_type = state.movestack[-2][0]
@@ -605,7 +607,7 @@ class MultiPlayerCoup():
                     print("Last action: " + str(curr.movestack[-1][1]))
                 challenge_initiated = -1
                 for i in range(self.players):
-                    if i != curr.curr_player:
+                    if i != curr.curr_player and self.check_target_aliveness(curr, i):
                         valid_moves = self.add_targets(self.valid_moves(i, curr), i, curr.curr_player, curr)
                         chosen_move = agents[i].make_move(valid_moves, curr)
                         if chosen_move[0] == ChallengeMoveType.challenge:
@@ -672,7 +674,7 @@ class MultiPlayerCoup():
                     print("Last counter: " + str(curr.movestack[-1][1]))
                 challenge_initiated = -1
                 for i in range(self.players):
-                    if i != counter_initiated:
+                    if i != counter_initiated and self.check_target_aliveness(curr, i):
                         valid_moves = self.add_targets(self.valid_moves(i, curr), i, curr.movestack[-1][1].player, curr)
                         chosen_move = agents[i].make_move(valid_moves, curr)
                         if chosen_move[0] == ChallengeMoveType.challenge:
@@ -683,7 +685,7 @@ class MultiPlayerCoup():
                 if challenge_initiated > -1: 
                     print("Challenge initiated by player " + str(challenge_initiated))
                     #update record of challenges in state
-                    curr.challenge_counts[challenge_initiated][curr.curr_player][restricted_countermoves[starting_action_type]] += 1
+                    #curr.challenge_counts[challenge_initiated][curr.curr_player][restricted_countermoves[starting_action_type]] += 1
                     result = self.eval_challenge(curr, challenge_initiated, counter_initiated)
                     curr = result[0]
                     challenge_success = result[1]
